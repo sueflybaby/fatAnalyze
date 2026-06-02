@@ -1,0 +1,32 @@
+# Cache
+.cache/
+*.pyc
+__pycache__/
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+.mypy_cache/
+.ruff_cache/
+
+# DICOM / NIfTI data (large, sensitive)
+data/
+raw/
+*.dcm
+*.nii
+*.nii.gz
+
+# Model weights (~1-2 GB)
+.totalsegmentator/
+.totalsegmentator_weights/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log

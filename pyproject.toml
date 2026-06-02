@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fatanalyze"
+version = "0.1.0"
+description = "CT-based fat analysis: liver, pancreas, and psoas (L3-approx) ectopic fat quantification."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "fatAnalyze" }]
+dependencies = [
+    "pydicom>=2.4",
+    "SimpleITK>=2.3",
+    "nibabel>=5.0",
+    "TotalSegmentator>=2.4",
+    "torch>=2.0",
+    "numpy<2.0",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+    "pyyaml>=6.0",
+    "pandas>=2.0",
+    "networkx>=3.0",
+]
+
+[project.optional-dependencies]
+notebook = ["ipywidgets>=8.0", "jupyter>=1.0"]
+test = ["pytest>=7.0"]
+
+[project.scripts]
+fatanalyze = "fatanalyze.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fatanalyze*"]
+
+[tool.setuptools.package-data]
+fatanalyze = ["config/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"

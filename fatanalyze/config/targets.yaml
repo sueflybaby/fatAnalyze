@@ -1,0 +1,74 @@
+totalseg:
+  task: total
+  fast: true
+  device: cpu
+  ml: false
+  nr_thr_resamp: 1
+  nr_thr_saving: 1
+  output_type: nifti
+  roi_subset:
+    - liver
+    - pancreas
+    - spleen
+    - iliopsoas_left
+    - iliopsoas_right
+
+targets:
+  liver:
+    label_name: liver
+    analysis_volume: "3d"
+    hu_ranges:
+      fat_severe:   [-200, 0]
+      fat_moderate: [0, 30]
+      fat_mild:     [30, 40]
+      normal:       [40, 80]
+    clinical_thresholds:
+      mean_hu_fatty_liver: 40
+    notes: "Hepatic steatosis. Mean liver HU < 40 or liver-spleen ratio < 1.0 indicates fatty liver."
+
+  pancreas:
+    label_name: pancreas
+    analysis_volume: "3d"
+    hu_ranges:
+      fat:    [-150, 0]
+      mixed:  [0, 30]
+      normal: [30, 60]
+    clinical_thresholds:
+      mean_hu_fatty: 30
+    notes: "Pancreatic steatosis. Mean HU - spleen HU (pancreas-spleen difference) is a more reliable metric than absolute HU."
+
+  iliopsoas_left:
+    label_name: iliopsoas_left
+    analysis_volume: "l3_slice"
+    l3_buffer_slices: 1
+    hu_ranges:
+      imat:        [-190, -30]
+      low_density: [-29, 29]
+      normal:      [30, 150]
+    clinical_thresholds:
+      imat_fraction_myosteatosis: 0.20
+      ldm_fraction_myosteatosis: 0.30
+    notes: "Intramuscular adipose tissue (IMAT) and low-density muscle (LDM) are myosteatosis markers at the L3 cross-section."
+
+  iliopsoas_right:
+    label_name: iliopsoas_right
+    analysis_volume: "l3_slice"
+    l3_buffer_slices: 1
+    hu_ranges:
+      imat:        [-190, -30]
+      low_density: [-29, 29]
+      normal:      [30, 150]
+    clinical_thresholds:
+      imat_fraction_myosteatosis: 0.20
+      ldm_fraction_myosteatosis: 0.30
+
+  spleen:
+    label_name: spleen
+    analysis_volume: "3d"
+    role: reference
+    notes: "Used as reference organ for liver-spleen ratio and pancreas-spleen difference."
+
+defaults:
+  bin_width: 5
+  histogram_range: [-200, 400]
+  psoas_area_units: "cm2"
