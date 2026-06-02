@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fatanalyze"
-version = "0.1.0"
+version = "0.2.0"
 description = "CT-based fat analysis: liver, pancreas, and psoas (L3-approx) ectopic fat quantification."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-notebook = ["ipywidgets>=8.0", "jupyter>=1.0"]
+notebook = ["ipywidgets>=8.0", "jupyter>=1.0", "ipympl>=0.9"]
 test = ["pytest>=7.0"]
 
 [project.scripts]

@@ -22,6 +22,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 # Editable install of the local package + notebook extras
+# (ipympl is required for the interactive polygon drawer; without it the
+#  quickstart notebook will print a clear install hint and fall back to inline.)
 pip install -e ".[notebook]"
 ```
 
@@ -111,7 +113,11 @@ it. Useful for:
 - Analysing structures TS missed or got wrong
 - Custom anatomical regions not in the standard preset list
 
-The drawer uses `matplotlib.widgets.PolygonSelector` (no extra deps):
+The drawer uses `matplotlib.widgets.PolygonSelector` and needs an
+**interactive matplotlib backend** (JupyterLab/Notebook 7+ users: the `widget`
+backend requires `pip install ipympl`, which is included in `.[notebook]`).
+Both `notebooks/single_case.ipynb` and `notebooks/interactive_quickstart.ipynb`
+auto-select the best available backend at the top of the notebook.
 
 ```python
 from fatanalyze.interactive import draw_roi_2d, analyze_user_roi, plot_user_roi

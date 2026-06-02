@@ -5,6 +5,23 @@ All notable changes to fatAnalyze are documented here. Versions follow
 
 ## [0.2.0] - 2026-06-02
 
+### Added (v0.2.0)
+- **`ipympl>=0.9`** added to the `.[notebook]` optional dependencies. The
+  `widget` matplotlib backend (required by `PolygonSelector` in
+  JupyterLab/Notebook 7+) ships in `ipympl`. If `ipympl` is missing, the
+  notebook setup cells fall back to a native backend or to `inline` with
+  a clear install hint.
+- Backend-picker logic in cell 1 of `notebooks/single_case.ipynb` and
+  cell 1 of `notebooks/interactive_quickstart.ipynb`: tries `widget` →
+  `notebook` → `qt5agg`/`qt6agg`/`tkagg` → `inline`.
+
+### Fixed (v0.2.0)
+- `notebooks/single_case.ipynb` cell 1 had a stale `matplotlib widget`
+  typo (missing `%`) that crashed the kernel on import. Replaced with
+  the proper `%matplotlib widget` invocation and the backend fallback.
+
+## [0.2.0] - 2026-06-02
+
 ### Added
 - **`fatanalyze.interactive` module**: user-drawn ROIs via a
   `matplotlib.widgets.PolygonSelector` 2D polygon on a single axial slice.
