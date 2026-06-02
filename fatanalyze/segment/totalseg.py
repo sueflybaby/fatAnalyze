@@ -38,13 +38,17 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 
 
-def _vol_hash(image: sitk.Image, roi_names: List[str], task: str) -> str:
+def _vol_hash(image: sitk.Image, roi_names: List[str], task: str,
+              fast: bool = False, device: str = "cpu") -> str:
     """Deterministic hash of the volume + request that keys the disk cache.
 
     Includes SeriesInstanceUID when available; otherwise falls back to
     (size, spacing, origin) so two unrelated DICOMs do not collide.
+
+    `fast` and `device` are part of the hash so re-running with a different
+    model variant invalidates the cache.
     """
-    parts = [task, ",".join(sorted(roi_names))]
+    parts = [task, f"fast={fast}", f"device={device}", ",".join(sorted(roi_names))]
     try:
         sid = image.GetMetaData("0020|000e")
         if sid:
@@ -175,7 +179,7 @@ def segment(
     # Set model-weight home so the model cache lives in the project
     os.environ.setdefault("TOTALSEG_HOME_DIR", str(Path(".cache/totalseg").resolve()))
 
-    vol_hash = _vol_hash(image, roi_names, task)
+    vol_hash = _vol_hash(image, roi_names, task, fast=fast, device=device)
     mask_paths = {r: _cache_path(cache_dir, vol_hash, r) for r in roi_names}
 
     hits: List[str] = []
@@ -190,7 +194,7 @@ def segment(
     if misses:
         _run_totalseg(
             image, cache_dir=cache_dir, vol_hash=vol_hash,
-            task=task, fast=fast, device=device,
+            task=task, fast=fast, device=device, roi_names=roi_names,
         )
 
     masks: Dict[str, sitk.Image] = {}
@@ -207,6 +211,7 @@ def _run_totalseg(
     task: str,
     fast: bool,
     device: str,
+    roi_names: List[str],
 ) -> None:
     """Run TotalSegmentator end-to-end and write per-ROI NIfTI masks.
 
@@ -215,7 +220,7 @@ def _run_totalseg(
     package.
     """
     from totalsegmentator.python_api import totalsegmentator
-    from totalsegmentator.map_to_binary import class_map_whole_body
+    from totalsegmentator.map_to_binary import class_map as _class_map
 
     tmp_nii = None
     try:
@@ -239,20 +244,41 @@ def _run_totalseg(
             nr_thr_saving=1,
             output_type="nifti",
             quiet=True,
+            roi_subset=roi_names if roi_names else None,
         )
-        # Some versions return a path, others return the Nifti1Image
+
+        # In TS 2.13 with roi_subset, output is per-ROI files (e.g. liver.nii.gz)
+        # written into a directory named after the requested output path.
+        # Detect this case first.
+        expected_roi_files = [out_dir / f"{n}.nii.gz" for n in (roi_names or [])]
+        per_roi_present = expected_roi_files and all(p.exists() for p in expected_roi_files)
+        if per_roi_present:
+            return
+
+        # Otherwise TS wrote a single multi-label NIfTI at the requested path
+        # (or returned one in-memory). The path may be a file, or — when TS
+        # honoured the name as a prefix — a directory of per-ROI files.
         if hasattr(result, "get_fdata"):
             multi_path = out_dir / "multilabel.nii.gz"
             if not multi_path.exists():
                 nib.save(result, str(multi_path))
         else:
             multi_path = Path(result)
+
+        if not multi_path.is_file():
+            raise RuntimeError(
+                f"TotalSegmentator produced no usable output: {multi_path} "
+                f"is not a file (possibly a directory of per-ROI masks) "
+                f"and no per-ROI files in {out_dir}"
+            )
+
         multi_nii = nib.load(str(multi_path))
         multi_arr = multi_nii.get_fdata().astype(np.int32)
 
-        # Map label_value -> friendly name
-        label_map = class_map_whole_body(task)
-        inv = {int(v): k for k, v in label_map.items()}
+        # Map label_value -> friendly name.
+        # class_map is a dict keyed by task name; each value is {label_int: name_str}.
+        label_map = _class_map.get(task, {})
+        inv = {int(label_val): name for label_val, name in label_map.items()}
         unique_vals = sorted(np.unique(multi_arr).astype(int).tolist())
 
         for label_val in unique_vals:
