@@ -3,6 +3,58 @@
 All notable changes to fatAnalyze are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-06-02
+
+### Added
+- **`fatanalyze.gui` package** — a native PySide6 GUI replaces Jupyter as
+  the primary single-case interface. New `fatanalyze-gui` console script.
+  - `app.py`: `QMainWindow` with menu bar, status bar, signal/slot wiring,
+    QC dialog after load, and an `export CSV` action.
+  - `slice_view.py`: `QGraphicsView` that renders one axial slice as an
+    8-bit grayscale `QImage` with live W/L, pan/zoom, and pixel readout in
+    the status bar. W/L preset buttons (Soft Tissue, Bone, Lung, Liver,
+    Psoas).
+  - `polygon_item.py`: editable `QGraphicsPolygonItem` with vertex handles
+    (drag to refine, right-click to remove last, double-click to close).
+    Signals carried by an embedded `QObject` (PySide6 `QGraphicsItem` is
+    not a `QObject`, so direct `Signal` doesn't work).
+  - `controls.py`: toolbar with Open DICOM, preset combo, W/L sliders, W/L
+    preset combo, Polygon toggle, Clear / Save ROI / Analyze / Export CSV.
+  - `roi_list.py`: multi-ROI `QListWidget` with rename + delete.
+  - `metrics_runner.py`: thin wrapper around `analyze_user_roi` that
+    rasterizes each ROI and, for psoas presets, **merges L+R masks via
+    `sitk.Or`** before calling `psoas_imat_fraction` so the combined
+    entry drives the myosteatosis breakdown.
+  - `results_panel.py`: text table per ROI + embedded `FigureCanvasQTAgg`
+    histogram with mean/median overlay lines.
+  - `roi.py`: `ROI` dataclass (name, preset, z, vertices, mask, result).
+- **9 new tests** in `tests/test_gui.py` covering window construction,
+  polygon state machine, ROI rasterization, psoas L+R merge, results-panel
+  formatting, and offscreen multi-ROI list manipulation. Full suite
+  **42/42 green**.
+- **End-to-end smoke test against the real DICOM series**:
+  L+R psoas ROIs at z=74 → combined area 9.00 cm²,
+  IMAT 12.6 %, LDM 37.3 %, normal 50.1 %, myosteatosis = False.
+
+### Changed
+- `pyproject.toml`:
+  - Version bumped `0.2.0` → `0.3.0`.
+  - New `[gui]` extras (`PySide6>=6.6`), new `[all]` convenience extras.
+  - `[notebook]` extras removed (Jupyter workflow deprecated).
+  - New `fatanalyze-gui` console script.
+- `notebooks/` directory **removed** — replaced by the native GUI.
+
+### Notes
+- The GUI delegates all analysis to the existing
+  `fatanalyze.interactive.analyze` and `fatanalyze.analysis` modules — no
+  new analysis logic, just a UI shell.
+- Tested in `QT_QPA_PLATFORM=offscreen` mode; runs the same on a real
+  display (no special config needed).
+- Per-ROI CSV export schema: one row per ROI; ratio keys are prefixed
+  `ratio_`; psoas-only fields (`imat_fraction`, `low_density_fraction`,
+  `normal_muscle_fraction`, `myosteatosis_flag`) appear when the
+  combined psoas entry is analyzed.
+
 ## [0.2.0] - 2026-06-02
 
 ### Added (v0.2.0)
