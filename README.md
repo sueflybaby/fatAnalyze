@@ -101,6 +101,55 @@ plot_overlay(image, liver, slice_index=z, title="Liver (L3-approx slice)")
 The notebook `notebooks/single_case.ipynb` walks through the same flow cell by
 cell with all visualizations inline.
 
+## User-drawn ROIs
+
+Beyond TotalSegmentator's auto-segmentation, you can draw a freehand polygon
+on any axial slice and run the same histogram + clinical-metric pipeline on
+it. Useful for:
+
+- Spot-checking TS results (does the auto-mask capture the right region?)
+- Analysing structures TS missed or got wrong
+- Custom anatomical regions not in the standard preset list
+
+The drawer uses `matplotlib.widgets.PolygonSelector` (no extra deps):
+
+```python
+from fatanalyze.interactive import draw_roi_2d, analyze_user_roi, plot_user_roi
+
+# 1. Open the interactive drawer on a chosen axial slice
+roi = draw_roi_2d(
+    image,
+    z_index=74,                  # axial slice to draw on
+    name="psoas_L3_manual",
+    preset="iliopsoas_left",     # reuse existing HU ranges + clinical flags
+)
+# Click to add polygon vertices, drag to move, click "Finish" to close.
+
+# 2. Same pipeline as TS: histogram, range ratios, clinical flags
+result = analyze_user_roi(image, roi)
+print(f"area={result['area_cm2']:.1f} cm^2  mean_hu={result['mean_hu']:.1f}")
+print(f"ratios={result['ratios']}")
+if result['psoas_metrics']:
+    print(f"myosteatosis={result['psoas_metrics']['myosteatosis_flag']}")
+
+# 3. Two-panel visualization
+fig = plot_user_roi(image, roi, analysis=result)
+fig.savefig("user_roi_psoas_L3_manual.png", dpi=120, bbox_inches="tight")
+
+# 4. Persist the mask + metadata for later re-use / batch reprocess
+roi.save_nifti("user_roi_psoas_L3_manual.nii.gz")
+```
+
+Supported presets are exactly the keys in `fatanalyze/config/targets.yaml`
+(`liver`, `pancreas`, `spleen`, `iliopsoas_left`, `iliopsoas_right`).
+Psoas presets additionally populate `psoas_metrics` (IMAT/LDM fractions +
+myosteatosis flag). The polygon is 2D and 1-slice thick, so `volume_ml`
+reflects a 1-slice volume; use TS segmentation for whole-organ 3D analysis.
+
+The interactive cell block is also embedded in
+`notebooks/single_case.ipynb` (block 7). It is wrapped in `try/except` so
+headless / `nbconvert` runs skip it automatically.
+
 ## Plan B: MONAI instead of TotalSegmentator
 
 If TotalSegmentator cannot run in your environment (Python version mismatch,
@@ -143,14 +192,25 @@ fatanalyze/
     histogram_plot.py
     overlay.py
     summary.py
+  interactive/                # user-drawn ROIs (v0.2.0)
+    polygon_utils.py
+    polygon_drawer.py
+    user_roi.py
+    analyze.py
+    viz.py
 notebooks/
   single_case.ipynb
 tests/
   test_io_qc.py
   test_histogram.py
   test_l3_detection.py
+  test_user_roi.py           # v0.2.0
 ```
 
 ## License
 
 MIT
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
