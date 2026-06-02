@@ -14,16 +14,20 @@ CT-based ectopic fat analysis for **liver (hepatic steatosis)**, **pancreas (pan
 ## Installation
 
 ```bash
+# Clone (or cd into) the project
+cd /Users/mac/dev/fatAnalyze
+
 # Create venv (recommended)
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install (this project)
-pip install -e .
-
-# Notebook extras
+# Editable install of the local package + notebook extras
 pip install -e ".[notebook]"
 ```
+
+> **Required step** — without `pip install -e .`, `import fatanalyze` will
+> raise `ModuleNotFoundError` in Jupyter. Editable install registers the
+> package via a `.pth` file in site-packages.
 
 The TotalSegmentator model weights (~1-2 GB) are downloaded on first run. The project
 stores them at `.cache/totalseg/` so the cache travels with the project (do not
