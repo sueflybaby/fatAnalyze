@@ -30,3 +30,6 @@ raw/
 
 # Logs
 *.log
+
+# graphify-out (output of the graphify skill, regeneratable)
+graphify-out/
