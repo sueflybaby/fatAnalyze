@@ -172,6 +172,41 @@ def _qcreport(image: sitk.Image) -> QCReport:
     return rep
 
 
+def _load_and_normalize_slices(file_names: List[str]) -> sitk.Image:
+    """Load a DICOM series slice-by-slice, normalizing mixed dimensions.
+
+    Some DICOM series contain slices with different pixel dimensions
+    (e.g. full-FOV axial + targeted reconstruction).  This helper reads
+    each slice individually, finds the most common ``(x_size, y_size)``
+    among all slices, resamples outliers to that size, and joins them
+    into a 3D volume with :func:`sitk.JoinSeries`.
+    """
+    from collections import Counter
+
+    slices: list[sitk.Image] = []
+    reader = sitk.ImageFileReader()
+    dim_counter: Counter = Counter()
+    for fn in file_names:
+        reader.SetFileName(fn)
+        img = reader.Execute()
+        dim_counter[img.GetSize()[:2]] += 1
+        slices.append(img)
+
+    target_xy = dim_counter.most_common(1)[0][0]
+    normalized: list[sitk.Image] = []
+    for img in slices:
+        if img.GetSize()[:2] != target_xy:
+            resampler = sitk.ResampleImageFilter()
+            resampler.SetSize((target_xy[0], target_xy[1], img.GetSize()[2]))
+            resampler.SetOutputSpacing(img.GetSpacing())
+            resampler.SetOutputOrigin(img.GetOrigin())
+            resampler.SetOutputDirection(img.GetDirection())
+            resampler.SetInterpolator(sitk.sitkNearestNeighbor)
+            img = resampler.Execute(img)
+        normalized.append(img)
+    return sitk.JoinSeries(normalized)
+
+
 def load_ct_series(dicom_dir: str | Path) -> Tuple[sitk.Image, QCReport]:
     """Load a DICOM series folder into a 3D SimpleITK.Image.
 
@@ -213,7 +248,13 @@ def load_ct_series(dicom_dir: str | Path) -> Tuple[sitk.Image, QCReport]:
     reader.MetaDataDictionaryArrayUpdateOn()
     reader.LoadPrivateTagsOn()
 
-    image = reader.Execute()
+    try:
+        image = reader.Execute()
+    except RuntimeError as exc:
+        if "IO region that does not fully contain" in str(exc):
+            image = _load_and_normalize_slices(file_names)
+        else:
+            raise
 
     # SimpleITK auto-applies RescaleSlope/Intercept -> HU
     qc = _qcreport(image)
