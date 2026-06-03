@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 
 import SimpleITK as sitk
 
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -177,6 +177,8 @@ class FatAnalyzeWindow(QMainWindow):
         self.slice_slider.valueChanged.connect(self._on_slice_changed)
         # ROI list
         self.roi_list.roi_selected.connect(self._on_roi_selected)
+        # Slice view polygon double-click closes the polygon
+        self.slice_view.polygon_closed.connect(self._on_save_polygon)
 
     # -- slots ---------------------------------------------------------
 
@@ -236,6 +238,10 @@ class FatAnalyzeWindow(QMainWindow):
                 self._active_polygon.clear()
                 self.slice_view._scene.removeItem(self._active_polygon)
                 self._active_polygon = None
+            # Hand polygon mode back to the view; it will stop intercepting
+            # mouse events so the user can pan / zoom / adjust W/L again.
+            self.slice_view.polygon_mode = False
+            self.slice_view.active_polygon = None
             return
         if self._image is None:
             QMessageBox.warning(self, "No image", "Open a DICOM folder first.")
@@ -246,6 +252,10 @@ class FatAnalyzeWindow(QMainWindow):
         color = PRESET_COLORS.get(preset, QColor(180, 180, 180))
         self._active_polygon = PolygonItem(color=color)
         self.slice_view._scene.addItem(self._active_polygon)
+        # Hand the polygon to the view so its mousePressEvent / dblClick
+        # can drive the polygon directly (events never reach this window).
+        self.slice_view.active_polygon = self._active_polygon
+        self.slice_view.polygon_mode = True
         self.statusBar().showMessage(
             f"Polygon drawing ON (preset: {preset}). "
             f"Left-click to add vertices, double-click to close.",
@@ -370,34 +380,6 @@ class FatAnalyzeWindow(QMainWindow):
         self.statusBar().showMessage(
             f"x={x} y={y}  HU={hu:.1f}  z={self.slice_view.z_index+1}/{self._image.GetDepth()}",
         )
-
-    # -- mouse forwarding (when polygon mode is on) --------------------
-
-    def mousePressEvent(self, event) -> None:  # type: ignore[override]
-        if (self.controls.draw_btn.isChecked()
-                and self._active_polygon is not None
-                and event.button() == Qt.LeftButton):
-            # Translate to scene coords
-            scene_pt = self.slice_view.mapToScene(
-                self.slice_view.mapFrom(self, event.position().toPoint())
-            )
-            self._active_polygon.add_vertex(scene_pt.x(), scene_pt.y())
-            return
-        if (self.controls.draw_btn.isChecked()
-                and self._active_polygon is not None
-                and event.button() == Qt.RightButton):
-            self._active_polygon.remove_last_vertex()
-            return
-        super().mousePressEvent(event)
-
-    def mouseDoubleClickEvent(self, event) -> None:  # type: ignore[override]
-        if (self.controls.draw_btn.isChecked()
-                and self._active_polygon is not None
-                and self._active_polygon.vertex_count() >= 3
-                and event.button() == Qt.LeftButton):
-            self._on_save_polygon()
-            return
-        super().mouseDoubleClickEvent(event)
 
 
 # -- entry point ---------------------------------------------------------

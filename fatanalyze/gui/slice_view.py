@@ -22,6 +22,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QImage, QPainter, QPixmap, QWheelEvent
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
+from fatanalyze.gui.polygon_item import PolygonItem
+
 
 # W/L presets commonly used in CT viewing
 WL_PRESETS: dict[str, tuple[float, float]] = {
@@ -53,6 +55,7 @@ class SliceView(QGraphicsView):
     """Display one axial slice; emits pixel-HU and (x, y) signals on hover."""
 
     pixel_hovered = Signal(int, int, float)  # (x, y, hu_value)
+    polygon_closed = Signal()  # emitted on double-click in polygon mode with ≥3 vertices
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -79,6 +82,12 @@ class SliceView(QGraphicsView):
         self._wl_anchor: Optional[QPointF] = None
         self._wl_window_anchor: float = self._window
         self._wl_level_anchor: float = self._level
+
+        # Polygon-drawing state. When ``polygon_mode`` is True, the
+        # view intercepts left/right clicks and double-clicks to drive
+        # the :class:`PolygonItem` referenced by ``active_polygon``.
+        self.polygon_mode: bool = False
+        self.active_polygon: Optional["PolygonItem"] = None
 
     # -- public API ----------------------------------------------------
 
@@ -151,6 +160,27 @@ class SliceView(QGraphicsView):
         self.scale(factor, factor)
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        # --- Polygon-drawing mode -----------------------------------
+        # When the user has toggled "Polygon: ON" in the toolbar, the
+        # main window sets ``self.polygon_mode = True`` and points
+        # ``self.active_polygon`` at the polygon being built. We
+        # intercept clicks at the view level (not the main window),
+        # because QGraphicsView consumes mouse events for its scene
+        # before they can bubble up to the main window.
+        if self.polygon_mode and self.active_polygon is not None:
+            if event.button() == Qt.LeftButton:
+                pt = self.mapToScene(event.position().toPoint())
+                self.active_polygon.add_vertex(pt.x(), pt.y())
+                return
+            if event.button() == Qt.RightButton:
+                self.active_polygon.remove_last_vertex()
+                return
+            # In polygon mode we deliberately suppress W/L drag and
+            # rubber-band selection. The user adjusts W/L via the
+            # toolbar sliders instead.
+            return
+
+        # --- Default (non-polygon) behaviour ------------------------
         if self._image is None:
             return super().mousePressEvent(event)
         if event.button() == Qt.MiddleButton:
@@ -164,6 +194,16 @@ class SliceView(QGraphicsView):
             self._wl_level_anchor = self._level
         else:
             super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # type: ignore[override]
+        """Double-click closes the active polygon (≥3 vertices) and signals the main window."""
+        if (self.polygon_mode
+                and self.active_polygon is not None
+                and self.active_polygon.vertex_count() >= 3
+                and event.button() == Qt.LeftButton):
+            self.polygon_closed.emit()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
         if self._image is None:

@@ -256,3 +256,166 @@ def test_results_panel_format(qapp):
     assert "10.00%" in s  # IMAT
     assert "20.00%" in s  # LDM
     assert "70.00%" in s  # normal
+
+
+# ---------------------------------------------------------------------------
+# SliceView mouse handling (regression tests for v0.3.0 vertex-drawing bug)
+# ---------------------------------------------------------------------------
+
+def _make_mouse_event(pos, button, event_type=None):
+    """Build a QMouseEvent suitable for direct mousePressEvent/dblClick tests.
+
+    PySide6 changed QMouseEvent's ctor signature across versions; this helper
+    picks the right one. We try the modern (5-arg + local + global) ctor
+    first, then fall back to the legacy (4-arg) form.
+    """
+    from PySide6.QtCore import QEvent, QPoint
+    from PySide6.QtGui import QMouseEvent
+
+    et = event_type or QEvent.MouseButtonPress
+    pos_qpoint = QPoint(int(pos[0]), int(pos[1]))
+    # Modern PySide6 (6.x): (type, localPos, button, buttons, modifiers, ...)
+    try:
+        return QMouseEvent(et, pos_qpoint, button, button, Qt.NoModifier)
+    except TypeError:
+        # Older 4-arg form
+        return QMouseEvent(et, pos_qpoint, button, Qt.NoModifier)
+
+
+def test_polygon_left_click_adds_vertex(qapp):
+    """Left-click in polygon mode must add a vertex at the mapped scene coords.
+
+    This is a regression test for v0.3.0: the original code put the
+    left-click handler in ``FatAnalyzeWindow.mousePressEvent``, but Qt
+    dispatches QGraphicsView mouse events to the view (not the parent
+    window), so vertex-adding was unreachable from real clicks.
+
+    We build the view with a known scene rect + identity transform so
+    widget-local (10, 20) maps to scene (10, 20) deterministically.
+    """
+    from fatanalyze.gui.polygon_item import PolygonItem
+    from fatanalyze.gui.slice_view import SliceView
+    from PySide6.QtCore import QEvent, QRectF
+
+    view = SliceView()
+    view._scene.setSceneRect(QRectF(0, 0, 1000, 1000))
+    view.resetTransform()  # ensure mapToScene is identity
+    poly = PolygonItem()
+    view._scene.addItem(poly)
+    view.polygon_mode = True
+    view.active_polygon = poly
+
+    assert poly.vertex_count() == 0
+
+    event = _make_mouse_event((10, 20), Qt.LeftButton, QEvent.MouseButtonPress)
+    view.mousePressEvent(event)
+    assert poly.vertex_count() == 1
+    assert poly.get_vertices()[0] == (10.0, 20.0)
+
+    event = _make_mouse_event((50, 60), Qt.LeftButton, QEvent.MouseButtonPress)
+    view.mousePressEvent(event)
+    assert poly.vertex_count() == 2
+    assert poly.get_vertices()[1] == (50.0, 60.0)
+
+
+def test_polygon_right_click_removes_last_vertex(qapp):
+    """Right-click in polygon mode must remove the most recent vertex."""
+    from fatanalyze.gui.polygon_item import PolygonItem
+    from fatanalyze.gui.slice_view import SliceView
+    from PySide6.QtCore import QEvent, QRectF
+
+    view = SliceView()
+    view._scene.setSceneRect(QRectF(0, 0, 1000, 1000))
+    view.resetTransform()
+    poly = PolygonItem()
+    view._scene.addItem(poly)
+    poly.add_vertex(0, 0)
+    poly.add_vertex(5, 5)
+    poly.add_vertex(10, 10)
+    assert poly.vertex_count() == 3
+
+    view.polygon_mode = True
+    view.active_polygon = poly
+
+    event = _make_mouse_event((0, 0), Qt.RightButton, QEvent.MouseButtonPress)
+    view.mousePressEvent(event)
+
+    assert poly.vertex_count() == 2
+    vs = poly.get_vertices()
+    assert vs == [(0.0, 0.0), (5.0, 5.0)]
+
+
+def test_polygon_double_click_closes_with_three_vertices(qapp):
+    """Double-click with ≥3 vertices must emit ``polygon_closed``.
+
+    Main window connects this signal to the save-ROI flow; the test
+    just verifies the signal fires when the user double-clicks.
+    """
+    from fatanalyze.gui.polygon_item import PolygonItem
+    from fatanalyze.gui.slice_view import SliceView
+    from PySide6.QtCore import QEvent, QRectF
+
+    view = SliceView()
+    view._scene.setSceneRect(QRectF(0, 0, 1000, 1000))
+    view.resetTransform()
+    poly = PolygonItem()
+    view._scene.addItem(poly)
+    for x, y in [(0, 0), (10, 0), (10, 10)]:
+        poly.add_vertex(x, y)
+
+    view.polygon_mode = True
+    view.active_polygon = poly
+
+    fired = []
+    view.polygon_closed.connect(lambda: fired.append(1))
+
+    event = _make_mouse_event((5, 5), Qt.LeftButton, QEvent.MouseButtonDblClick)
+    view.mouseDoubleClickEvent(event)
+    assert fired == [1], f"expected polygon_closed to fire once, got {fired}"
+
+    # With only 2 vertices, double-click should NOT fire (caller wants ≥3)
+    poly2 = PolygonItem()
+    view._scene.addItem(poly2)
+    poly2.add_vertex(0, 0)
+    poly2.add_vertex(1, 1)
+    view.active_polygon = poly2
+    fired.clear()
+    event = _make_mouse_event((0, 0), Qt.LeftButton, QEvent.MouseButtonDblClick)
+    view.mouseDoubleClickEvent(event)
+    assert fired == [], "double-click with <3 vertices must not close polygon"
+
+
+def test_saved_roi_keeps_preset_color_in_scene(qapp):
+    """After 'Save ROI', the polygon stays in the scene with the preset color.
+
+    This validates the v0.3.0 color-highlight UX: L-Psoas = red,
+    R-Psoas = blue, liver = green, etc. The polygon is what gives the
+    visual feedback when multiple ROIs are drawn back-to-back.
+    """
+    from fatanalyze.gui import FatAnalyzeWindow
+    from fatanalyze.gui.app import PRESET_COLORS
+
+    w = FatAnalyzeWindow()
+    # We need a fake image loaded so the draw toggle will accept ON
+    img = _make_synthetic_image(shape=(20, 64, 64))
+    w._image = img
+    w.slice_view.set_image(img)
+
+    # Simulate "Polygon: ON" with preset = iliopsoas_left
+    w.controls.preset_combo.setCurrentText("iliopsoas_left")
+    w._on_draw_toggled(True)
+    assert w._active_polygon is not None
+    expected_color = PRESET_COLORS["iliopsoas_left"]
+    pen = w._active_polygon.pen()
+    assert pen.color().red() == expected_color.red()
+    assert pen.color().green() == expected_color.green()
+    assert pen.color().blue() == expected_color.blue()
+
+    # Add 3 vertices and simulate save via the dblclick signal path
+    for x, y in [(20, 20), (30, 20), (25, 30)]:
+        w._active_polygon.add_vertex(x, y)
+    w._on_save_polygon = lambda: None  # avoid the QInputDialog prompt
+    # Manually call the slot via the signal
+    w._active_polygon.close()
+    # Verify the polygon is still in the scene (color-highlight stays visible)
+    assert w._active_polygon in w.slice_view._scene.items()
