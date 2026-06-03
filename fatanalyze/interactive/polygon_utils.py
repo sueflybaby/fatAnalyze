@@ -5,7 +5,37 @@ from typing import Sequence
 
 import numpy as np
 import SimpleITK as sitk
-from matplotlib.path import Path as MplPath
+
+
+def _points_in_polygon(points: np.ndarray, vertices: np.ndarray) -> np.ndarray:
+    """Ray-casting point-in-polygon test (pure NumPy, no matplotlib dependency).
+
+    Parameters
+    ----------
+    points : (N, 2) array
+        Query points as ``(x, y)`` columns.
+    vertices : (M, 2) array
+        Polygon vertices in order (closed). Must have at least 3 rows.
+
+    Returns
+    -------
+    (N,) bool array
+    """
+    x, y = points[:, 0], points[:, 1]
+    verts = np.asarray(vertices, dtype=float)
+    inside = np.zeros(len(x), dtype=bool)
+    n = len(verts)
+    j = n - 1
+    for i in range(n):
+        xi, yi = verts[i]
+        xj, yj = verts[j]
+        with np.errstate(invalid="ignore", divide="ignore"):
+            cond = ((yi > y) != (yj > y)) & (
+                x < (xj - xi) * (y - yi) / (yj - yi) + xi
+            )
+        inside ^= cond
+        j = i
+    return inside
 
 
 def empty_mask_like(image: sitk.Image) -> sitk.Image:
@@ -31,7 +61,7 @@ def rasterize_polygon(
     z_index : int
         Axial slice index (0-based, SimpleITK z order).
     vertices_xy : sequence of (x, y)
-        Polygon vertices in matplotlib display space (x = column, y = row).
+        Polygon vertices in pixel coordinates (x = column, y = row).
         Must contain at least 3 distinct points.
 
     Returns
@@ -51,8 +81,7 @@ def rasterize_polygon(
     grid_x, grid_y = np.meshgrid(xs, ys)
     points = np.column_stack([grid_x.ravel(), grid_y.ravel()])
 
-    poly_path = MplPath(verts)
-    inside = poly_path.contains_points(points).reshape(size_y, size_x)
+    inside = _points_in_polygon(points, verts).reshape(size_y, size_x)
 
     arr = np.zeros((size_z, size_y, size_x), dtype=np.uint8)
     arr[z_index] = inside.astype(np.uint8)
