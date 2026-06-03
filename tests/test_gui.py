@@ -421,3 +421,37 @@ def test_saved_roi_keeps_preset_color_in_scene(qapp):
     w._active_polygon.close()
     # Verify the polygon is still in the scene (color-highlight stays visible)
     assert w._active_polygon in w.slice_view._scene.items()
+
+
+# ---------------------------------------------------------------------------
+# PolygonItem batch set_vertices (used in the new overlay-based workflow)
+# ---------------------------------------------------------------------------
+
+
+def test_polygon_set_vertices_batch_load(qapp):
+    from fatanalyze.gui.polygon_item import PolygonItem
+
+    poly = PolygonItem()
+    assert poly.vertex_count() == 0
+
+    verts = [(10.0, 20.0), (30.0, 20.0), (30.0, 40.0), (10.0, 40.0)]
+    poly.set_vertices(verts)
+
+    assert poly.vertex_count() == 4
+    assert poly.is_closed
+    assert poly.get_vertices() == verts
+
+
+def test_polygon_set_vertices_replaces_existing(qapp):
+    from fatanalyze.gui.polygon_item import PolygonItem
+
+    poly = PolygonItem()
+    poly.add_vertex(0, 0)
+    poly.add_vertex(5, 5)
+    poly.add_vertex(10, 0)
+    assert poly.vertex_count() == 3
+
+    verts = [(100.0, 200.0), (300.0, 200.0)]
+    poly.set_vertices(verts)
+    assert poly.vertex_count() == 2
+    assert not poly.is_closed

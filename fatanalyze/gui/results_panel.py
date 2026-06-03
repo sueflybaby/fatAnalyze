@@ -38,7 +38,7 @@ class ResultsPanel(QWidget):
         self.text.setPlaceholderText(self.tr("No ROIs analyzed yet.") + "\n\n"
                                       "1. " + self.tr("Open a DICOM folder") + "\n"
                                       "2. " + self.tr("Pick a slice with the slider") + "\n"
-                                      "3. " + self.tr("Click 'Polygon: OFF' to enable drawing") + "\n"
+                                      "3. " + self.tr("Click 'ROI Draw: OFF' to enable drawing") + "\n"
                                       "4. " + self.tr("Left-click to add vertices, double-click to close") + "\n"
                                       "5. " + self.tr("Click 'Analyze' to compute metrics"))
 
@@ -179,7 +179,7 @@ class ResultsPanel(QWidget):
         self.text.setPlaceholderText(self.tr("No ROIs analyzed yet.") + "\n\n"
                                       "1. " + self.tr("Open a DICOM folder") + "\n"
                                       "2. " + self.tr("Pick a slice with the slider") + "\n"
-                                      "3. " + self.tr("Click 'Polygon: OFF' to enable drawing") + "\n"
+                                      "3. " + self.tr("Click 'ROI Draw: OFF' to enable drawing") + "\n"
                                       "4. " + self.tr("Left-click to add vertices, double-click to close") + "\n"
                                       "5. " + self.tr("Click 'Analyze' to compute metrics"))
         if self._current_result:

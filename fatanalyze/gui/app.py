@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import numpy as np
 import SimpleITK as sitk
 
 from PySide6.QtCore import Qt
@@ -106,8 +107,9 @@ class FatAnalyzeWindow(QMainWindow):
         right_layout.addWidget(self.results, 2)
 
         hsplit.addWidget(right)
-        hsplit.setStretchFactor(0, 3)
-        hsplit.setStretchFactor(1, 2)
+        hsplit.setStretchFactor(0, 2)
+        hsplit.setStretchFactor(1, 1)
+        hsplit.setSizes([800, 400])
 
         main_layout = QHBoxLayout(central)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -165,6 +167,7 @@ class FatAnalyzeWindow(QMainWindow):
         self.controls.export_csv_requested.connect(self._on_export_csv)
         self.controls.language_changed.connect(self._on_language_changed)
         self.slice_slider.valueChanged.connect(self._on_slice_changed)
+        self.slice_view.slice_changed.connect(self._on_view_slice_changed)
         self.roi_list.roi_selected.connect(self._on_roi_selected)
         self.slice_view.polygon_closed.connect(self._on_save_polygon)
 
@@ -238,6 +241,14 @@ class FatAnalyzeWindow(QMainWindow):
         depth = self._image.GetDepth()
         self.slice_label.setText(f"{z+1} / {depth}")
 
+    def _on_view_slice_changed(self, z: int) -> None:
+        """Sync the slider when the view scrolls via mouse wheel."""
+        self.slice_slider.blockSignals(True)
+        self.slice_slider.setValue(z)
+        self.slice_slider.blockSignals(False)
+        depth = self._image.GetDepth()
+        self.slice_label.setText(f"{z+1} / {depth}")
+
     def _on_draw_toggled(self, on: bool) -> None:
         if not on:
             if self._active_polygon is not None and self._active_polygon.vertex_count() < 3:
@@ -259,7 +270,7 @@ class FatAnalyzeWindow(QMainWindow):
         self.slice_view.active_polygon = self._active_polygon
         self.slice_view.polygon_mode = True
         self.statusBar().showMessage(
-            self.tr("Polygon drawing ON (preset: {preset}). "
+            self.tr("ROI drawing ON (preset: {preset}). "
                     "Left-click to add vertices, double-click to close.").format(
                 preset=preset
             ),
@@ -269,7 +280,7 @@ class FatAnalyzeWindow(QMainWindow):
         if self._active_polygon is None:
             return
         self._active_polygon.clear()
-        self.statusBar().showMessage(self.tr("Polygon cleared."), 2000)
+        self.statusBar().showMessage(self.tr("ROI cleared."), 2000)
 
     def _on_save_polygon(self) -> None:
         if self._active_polygon is None or self._active_polygon.vertex_count() < 3:

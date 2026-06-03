@@ -128,7 +128,7 @@ class ControlsBar(QToolBar):
         self.addSeparator()
 
         # --- Drawing actions ---
-        self.draw_btn = QPushButton(self.tr("Polygon: OFF"))
+        self.draw_btn = QPushButton(self.tr("ROI Draw: OFF"))
         self.draw_btn.setCheckable(True)
         self.draw_btn.toggled.connect(self._on_draw_toggled)
         self.addWidget(self.draw_btn)
@@ -169,8 +169,7 @@ class ControlsBar(QToolBar):
             self.wl_preset_changed.emit(keys[self.wl_preset_combo.currentIndex()])
 
     def _on_draw_toggled(self, checked: bool) -> None:
-        # Re-render the button label in the active locale
-        self.draw_btn.setText(self.tr("Polygon: ON") if checked else self.tr("Polygon: OFF"))
+        self.draw_btn.setText(self.tr("ROI Draw: ON") if checked else self.tr("ROI Draw: OFF"))
         self.draw_toggle_requested.emit(checked)
 
     def _toggle_language(self) -> None:
@@ -206,7 +205,6 @@ class ControlsBar(QToolBar):
         self._update_lang_btn_text()
 
     def _update_lang_btn_text(self) -> None:
-        """Show the *target* language so user knows what clicking does."""
         self._lang_btn.setText("中文" if current_locale() == "en" else "English")
 
     # -- retranslation -------------------------------------------------
@@ -252,7 +250,7 @@ class ControlsBar(QToolBar):
         self._analyze_btn.setText(self.tr("Analyze"))
         self._export_btn.setText(self.tr("Export CSV"))
         is_on = self.draw_btn.isChecked()
-        self.draw_btn.setText(self.tr("Polygon: ON") if is_on else self.tr("Polygon: OFF"))
+        self.draw_btn.setText(self.tr("ROI Draw: ON") if is_on else self.tr("ROI Draw: OFF"))
 
 
 __all__ = ["ControlsBar", "PRESET_CHOICES"]

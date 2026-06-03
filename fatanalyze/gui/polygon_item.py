@@ -1,24 +1,18 @@
 """Editable polygon :class:`QGraphicsPolygonItem` for ROI drawing.
 
-The polygon keeps a list of :class:`QGraphicsEllipseItem` vertex handles
-sized ~5 px. The user can:
-- left-click on empty area to add a vertex (caller decides when to "close")
-- drag a vertex handle to refine
+The polygon keeps a list of draggable :class:`_VertexHandle` items.  The
+user can:
+
+- left-click on empty area to add a vertex
+- drag a vertex handle to refine the shape
 - right-click to remove the last vertex
-- the caller calls :meth:`PolygonItem.polygon` to get the final vertex list
-  and the polygon is then detached from the scene.
+- double-click to close the polygon (caller listens to signal)
 
-A polygon with ``< 3`` vertices is treated as still-being-drawn (no fill,
-no border close path).
-
-Note: :class:`QGraphicsItem` is *not* a :class:`QObject` in PySide6, so this
-class cannot expose :class:`Signal` directly. Instead it embeds a tiny
-``QObject`` helper (``_Signals``) that callers can connect to via
-:attr:`signals`. The signals are emitted on vertex add/remove/change.
+A polygon with ``< 3`` vertices is treated as still-being-drawn.
 """
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainterPath, QPen
@@ -26,14 +20,13 @@ from PySide6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsPathItem,
-    QGraphicsScene,
     QGraphicsSceneMouseEvent,
 )
 
 
 Vertex = Tuple[float, float]
 
-HANDLE_RADIUS = 5.0
+HANDLE_RADIUS = 2.5
 HANDLE_BRUSH = QBrush(QColor(255, 255, 0, 200))
 HANDLE_PEN = QPen(QColor(0, 0, 0, 255), 1.0)
 
@@ -45,41 +38,59 @@ class _PolygonSignals(QObject):
     vertices_changed = Signal()
 
 
+class _VertexHandle(QGraphicsEllipseItem):
+    """A draggable vertex handle that updates its parent polygon on move."""
+
+    def __init__(self, x: float, y: float, index: int,
+                 polygon: PolygonItem) -> None:
+        super().__init__(x - HANDLE_RADIUS, y - HANDLE_RADIUS,
+                         2 * HANDLE_RADIUS, 2 * HANDLE_RADIUS)
+        self._index = index
+        self._polygon = polygon
+        self.setBrush(HANDLE_BRUSH)
+        self.setPen(HANDLE_PEN)
+        self.setFlag(QGraphicsItem.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.ItemSendsScenePositionChanges, True)
+        self.setZValue(11)
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionChange:
+            self._polygon._handle_moving(self._index, value)
+        elif change == QGraphicsItem.ItemPositionHasChanged:
+            self._polygon._handle_moved(self._index)
+        return super().itemChange(change, value)
+
+
 class PolygonItem(QGraphicsPathItem):
     """An editable 2D polygon rendered as a closed :class:`QPainterPath`."""
 
-    def __init__(self, color: QColor = QColor(0, 255, 0), parent: Optional[QGraphicsItem] = None) -> None:
+    def __init__(self, color: QColor = QColor(0, 255, 0),
+                 parent: Optional[QGraphicsItem] = None) -> None:
         super().__init__(parent)
         self._vertices: List[QPointF] = []
-        self._handles: List[QGraphicsEllipseItem] = []
+        self._handles: List[_VertexHandle] = []
         self._color = color
         self._closed = False
         self.signals = _PolygonSignals()
+        self._is_dragging = False
+        self._drag_positions: List[QPointF] = []
 
         pen = QPen(self._color, 2.0)
         pen.setCosmetic(True)
         self.setPen(pen)
-        brush = QBrush(QColor(self._color.red(), self._color.green(), self._color.blue(), 60))
-        self.setBrush(brush)
+        self.setBrush(QBrush(
+            QColor(self._color.red(), self._color.green(), self._color.blue(), 60)))
         self.setZValue(10)
         self.setFlag(QGraphicsItem.ItemIsFocusable, True)
+        self.setAcceptHoverEvents(True)
 
     # -- vertex API ----------------------------------------------------
 
     def add_vertex(self, x: float, y: float) -> int:
-        """Append a new vertex at scene coords ``(x, y)``; returns the new index."""
         pt = QPointF(x, y)
         self._vertices.append(pt)
-        handle = QGraphicsEllipseItem(
-            pt.x() - HANDLE_RADIUS, pt.y() - HANDLE_RADIUS,
-            2 * HANDLE_RADIUS, 2 * HANDLE_RADIUS,
-        )
-        handle.setBrush(HANDLE_BRUSH)
-        handle.setPen(HANDLE_PEN)
-        handle.setFlag(QGraphicsItem.ItemIsMovable, True)
-        handle.setFlag(QGraphicsItem.ItemSendsScenePositionChanges, True)
-        handle.setZValue(11)
-        # Add to scene (NOT as child of self) so it can be moved independently
+        idx = len(self._vertices) - 1
+        handle = _VertexHandle(x, y, idx, self)
         scene = self.scene()
         if scene is not None:
             scene.addItem(handle)
@@ -87,12 +98,10 @@ class PolygonItem(QGraphicsPathItem):
             handle.setParentItem(self)
         self._handles.append(handle)
         self._rebuild_path()
-        idx = len(self._vertices) - 1
         self.signals.vertex_added.emit(idx)
         return idx
 
     def remove_last_vertex(self) -> Optional[int]:
-        """Pop the last vertex (and its handle). Returns the removed index or None."""
         if not self._vertices:
             return None
         handle = self._handles.pop()
@@ -100,7 +109,6 @@ class PolygonItem(QGraphicsPathItem):
         if scene is not None:
             scene.removeItem(handle)
         self._vertices.pop()
-        # Going below 3 vertices means the polygon is no longer closeable
         if len(self._vertices) < 3:
             self._closed = False
         self._rebuild_path()
@@ -119,7 +127,6 @@ class PolygonItem(QGraphicsPathItem):
         self.signals.vertices_changed.emit()
 
     def close(self) -> None:
-        """Mark the polygon as closed (must have >= 3 vertices)."""
         if len(self._vertices) < 3:
             return
         self._closed = True
@@ -133,30 +140,43 @@ class PolygonItem(QGraphicsPathItem):
         return len(self._vertices)
 
     def set_color(self, color: QColor) -> None:
-        """Change the polygon's outline + fill color in place."""
         self._color = color
         pen = QPen(self._color, 2.0)
         pen.setCosmetic(True)
         self.setPen(pen)
-        self.setBrush(QBrush(QColor(
-            self._color.red(), self._color.green(), self._color.blue(), 60,
-        )))
+        self.setBrush(QBrush(
+            QColor(self._color.red(), self._color.green(), self._color.blue(), 60)))
+
+    def set_vertices(self, vertices: Sequence[Vertex]) -> None:
+        self.clear()
+        for x, y in vertices:
+            self.add_vertex(x, y)
+        if len(self._vertices) >= 3:
+            self._closed = True
+            self._rebuild_path()
 
     def get_vertices(self) -> List[Vertex]:
         return [(float(v.x()), float(v.y())) for v in self._vertices]
 
+    def vertex_at(self, scene_pt: QPointF, tolerance: float = 8.0) -> Optional[int]:
+        """Return the index of a vertex near *scene_pt*, or None."""
+        for i, h in enumerate(self._handles):
+            if h.sceneBoundingRect().contains(scene_pt):
+                return i
+        return None
+
     # -- handle drag ---------------------------------------------------
 
-    def itemChange(self, change, value):  # type: ignore[override]
-        if change == QGraphicsItem.ItemScenePositionHasChanged:
-            for i, h in enumerate(self._handles):
-                # When a child handle moves, its scenePos is the value
-                self._vertices[i] = h.scenePos()
-            self._rebuild_path()
-            self.signals.vertices_changed.emit()
-        return super().itemChange(change, value)
+    def _handle_moving(self, index: int, new_pos: QPointF) -> None:
+        self._is_dragging = True
+        self._vertices[index] = new_pos
+        self._rebuild_path()
 
-    # -- path building -------------------------------------------------
+    def _handle_moved(self, index: int) -> None:
+        self._is_dragging = False
+        self.signals.vertices_changed.emit()
+
+    # -- path building ------------------------------------------------
 
     def _rebuild_path(self) -> None:
         if not self._vertices:
@@ -169,9 +189,10 @@ class PolygonItem(QGraphicsPathItem):
             path.closeSubpath()
         self.setPath(path)
 
-    def boundingRect(self) -> QRectF:  # type: ignore[override]
-        return super().boundingRect().adjusted(-HANDLE_RADIUS, -HANDLE_RADIUS,
-                                               HANDLE_RADIUS, HANDLE_RADIUS)
+    def boundingRect(self) -> QRectF:
+        return super().boundingRect().adjusted(
+            -HANDLE_RADIUS, -HANDLE_RADIUS,
+            HANDLE_RADIUS, HANDLE_RADIUS)
 
 
 __all__ = ["PolygonItem"]

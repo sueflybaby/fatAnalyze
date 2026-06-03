@@ -1,12 +1,12 @@
-"""2D CT-slice viewer with window/level and pan/zoom.
+"""2D CT-slice viewer with window/level and zoom.
 
 The view is a thin :class:`QGraphicsView` that renders a single axial slice
 of a 3D :class:`SimpleITK.Image` as an 8-bit grayscale :class:`QImage`.
 W/L is applied at render time only — the underlying HU array is untouched.
 
 Mouse bindings (when *not* in polygon-drawing mode):
-- Middle-mouse drag: pan
-- Wheel: zoom
+- Wheel: scroll slices
+- Middle-mouse drag up/down: zoom in/out
 - Right-mouse drag: adjust W/L (drag right = widen, drag up = raise center)
 - ``0`` key: reset view
 - Pixel readout (HU) is shown in the status bar on mouse-move.
@@ -56,6 +56,7 @@ class SliceView(QGraphicsView):
 
     pixel_hovered = Signal(int, int, float)  # (x, y, hu_value)
     polygon_closed = Signal()  # emitted on double-click in polygon mode with ≥3 vertices
+    slice_changed = Signal(int)  # emitted when the user scrolls to a different slice
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -82,6 +83,10 @@ class SliceView(QGraphicsView):
         self._wl_anchor: Optional[QPointF] = None
         self._wl_window_anchor: float = self._window
         self._wl_level_anchor: float = self._level
+
+        # Zoom drag state (middle-button vertical drag)
+        self._zoom_dragging: bool = False
+        self._zoom_last_y: float = 0.0
 
         # Polygon-drawing state. When ``polygon_mode`` is True, the
         # view intercepts left/right clicks and double-clicks to drive
@@ -140,10 +145,7 @@ class SliceView(QGraphicsView):
         self._arr_shape = (int(slice_arr.shape[0]), int(slice_arr.shape[1]))
         display = _apply_window_level(slice_arr, self._window, self._level)
         h, w = display.shape
-        # QImage needs (w, h) row-major, 8-bit grayscale
         qimg = QImage(display.data, w, h, w, QImage.Format_Grayscale8)
-        # The QImage references display.data; copy to a QPixmap so the buffer
-        # can be freed safely (display is a local).
         pix = QPixmap.fromImage(qimg.copy())
         self._pixmap_item.setPixmap(pix)
         self._scene.setSceneRect(QRectF(pix.rect()))
@@ -156,37 +158,39 @@ class SliceView(QGraphicsView):
     def wheelEvent(self, event: QWheelEvent) -> None:  # type: ignore[override]
         if self._image is None:
             return
-        factor = 1.25 if event.angleDelta().y() > 0 else 1.0 / 1.25
-        self.scale(factor, factor)
+        delta = event.angleDelta().y()
+        depth = self._image.GetDepth()
+        if delta > 0:
+            self._z_index = max(0, self._z_index - 1)
+        else:
+            self._z_index = min(depth - 1, self._z_index + 1)
+        self._render_slice()
+        self.slice_changed.emit(self._z_index)
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
         # --- Polygon-drawing mode -----------------------------------
-        # When the user has toggled "Polygon: ON" in the toolbar, the
-        # main window sets ``self.polygon_mode = True`` and points
-        # ``self.active_polygon`` at the polygon being built. We
-        # intercept clicks at the view level (not the main window),
-        # because QGraphicsView consumes mouse events for its scene
-        # before they can bubble up to the main window.
+        # When a vertex handle exists at the click point, let the event
+        # pass through so the user can drag the handle. Otherwise add a
+        # new vertex or remove last on right-click.
         if self.polygon_mode and self.active_polygon is not None:
             if event.button() == Qt.LeftButton:
                 pt = self.mapToScene(event.position().toPoint())
-                self.active_polygon.add_vertex(pt.x(), pt.y())
-                return
-            if event.button() == Qt.RightButton:
+                if self.active_polygon.vertex_at(pt) is None:
+                    self.active_polygon.add_vertex(pt.x(), pt.y())
+                    return
+                # Click on a handle — pass through so it can be dragged
+            elif event.button() == Qt.RightButton:
                 self.active_polygon.remove_last_vertex()
                 return
-            # In polygon mode we deliberately suppress W/L drag and
-            # rubber-band selection. The user adjusts W/L via the
-            # toolbar sliders instead.
-            return
+            else:
+                return
 
         # --- Default (non-polygon) behaviour ------------------------
         if self._image is None:
             return super().mousePressEvent(event)
         if event.button() == Qt.MiddleButton:
-            self.setDragMode(QGraphicsView.ScrollHandDrag)
-            self._pan_pressed = True
-            super().mousePressEvent(event)
+            self._zoom_dragging = True
+            self._zoom_last_y = event.position().y()
         elif event.button() == Qt.RightButton:
             self._wl_dragging = True
             self._wl_anchor = event.position()
@@ -208,6 +212,12 @@ class SliceView(QGraphicsView):
     def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
         if self._image is None:
             return super().mouseMoveEvent(event)
+        if self._zoom_dragging:
+            dy = self._zoom_last_y - event.position().y()
+            factor = 1.0 + dy * 0.01
+            if factor > 0:
+                self.scale(factor, factor)
+            self._zoom_last_y = event.position().y()
         if self._wl_dragging and self._wl_anchor is not None:
             dx = event.position().x() - self._wl_anchor.x()
             dy = event.position().y() - self._wl_anchor.y()
@@ -226,7 +236,7 @@ class SliceView(QGraphicsView):
 
     def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
         if event.button() == Qt.MiddleButton:
-            self.setDragMode(QGraphicsView.NoDrag)
+            self._zoom_dragging = False
         elif event.button() == Qt.RightButton:
             self._wl_dragging = False
             self._wl_anchor = None
