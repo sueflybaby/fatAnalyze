@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from fatanalyze.gui.controls import ControlsBar
+from fatanalyze.gui.i18n import install_locale, current_locale, SUPPORTED_LOCALES, reset_for_test
 from fatanalyze.gui.metrics_runner import compute_for_rois, rasterize
 from fatanalyze.gui.polygon_item import PolygonItem
 from fatanalyze.gui.results_panel import ResultsPanel
@@ -38,7 +39,6 @@ from fatanalyze.io.dicom_loader import load_ct_series
 from fatanalyze.interactive.user_roi import UserROI
 
 
-# Color per preset (used to draw the polygon in the slice view)
 PRESET_COLORS: Dict[str, QColor] = {
     "iliopsoas_left":  QColor(255,  80,  80),
     "iliopsoas_right": QColor( 80,  80, 255),
@@ -50,19 +50,9 @@ PRESET_COLORS: Dict[str, QColor] = {
 
 
 class FatAnalyzeWindow(QMainWindow):
-    """The single-window fatAnalyze GUI.
-
-    Layout (horizontal splitter):
-        ┌──────────────────────────────┬─────────────────────┐
-        │ Toolbar                      │                     │
-        │ Slice view (with polygons)   │ ROI list            │
-        │ Slice slider + status        │ Results panel       │
-        └──────────────────────────────┴─────────────────────┘
-    """
-
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("fatAnalyze")
+        self.setWindowTitle(self.tr("fatAnalyze"))
         self.resize(1280, 800)
 
         self._image: Optional[sitk.Image] = None
@@ -70,6 +60,7 @@ class FatAnalyzeWindow(QMainWindow):
         self._active_polygon: Optional[PolygonItem] = None
         self._polygons_by_name: Dict[str, PolygonItem] = {}
         self._results: Dict[str, dict] = {}
+        self._menu_actions: Dict[str, QAction] = {}
 
         self._build_ui()
         self._wire_signals()
@@ -77,28 +68,24 @@ class FatAnalyzeWindow(QMainWindow):
     # -- UI scaffolding -----------------------------------------------
 
     def _build_ui(self) -> None:
-        # Top toolbar
         self.controls = ControlsBar(self)
         self.addToolBar(Qt.TopToolBarArea, self.controls)
 
-        # Menu bar
         self._build_menu()
 
-        # Central layout: horizontal splitter
         central = QWidget()
         self.setCentralWidget(central)
         hsplit = QSplitter(Qt.Horizontal)
 
-        # Left side: slice view + slider
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
         self.slice_view = SliceView(self)
         left_layout.addWidget(self.slice_view, 1)
 
-        # Slice slider row
         slider_row = QHBoxLayout()
-        slider_row.addWidget(QLabel("Slice:"))
+        self._slice_label_label = QLabel(self.tr("Slice:"))
+        slider_row.addWidget(self._slice_label_label)
         self.slice_slider = QSlider(Qt.Horizontal)
         self.slice_slider.setRange(0, 0)
         self.slice_slider.setEnabled(False)
@@ -109,7 +96,6 @@ class FatAnalyzeWindow(QMainWindow):
 
         hsplit.addWidget(left)
 
-        # Right side: ROI list (top) + results (bottom)
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -127,43 +113,47 @@ class FatAnalyzeWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(hsplit)
 
-        # Status bar
         self.setStatusBar(QStatusBar(self))
-        self.statusBar().showMessage("Open a DICOM folder to begin.")
+        self.statusBar().showMessage(self.tr("Open a DICOM folder to begin."))
         self.slice_view.pixel_hovered.connect(self._on_pixel_hovered)
 
     def _build_menu(self) -> None:
         menubar = self.menuBar()
-        file_menu = menubar.addMenu("&File")
 
-        open_action = QAction("Open DICOM Folder…", self)
-        open_action.setShortcut(QKeySequence.Open)
-        open_action.triggered.connect(self._on_open_folder)
-        file_menu.addAction(open_action)
+        self._file_menu = menubar.addMenu(self.tr("&File"))
 
-        export_action = QAction("Export CSV…", self)
-        export_action.triggered.connect(self._on_export_csv)
-        file_menu.addAction(export_action)
+        act = QAction(self.tr("Open DICOM Folder…"), self)
+        act.setShortcut(QKeySequence.Open)
+        act.triggered.connect(self._on_open_folder)
+        self._file_menu.addAction(act)
+        self._menu_actions["open"] = act
 
-        file_menu.addSeparator()
-        quit_action = QAction("Quit", self)
-        quit_action.setShortcut(QKeySequence.Quit)
-        quit_action.triggered.connect(self.close)
-        file_menu.addAction(quit_action)
+        act = QAction(self.tr("Export CSV…"), self)
+        act.triggered.connect(self._on_export_csv)
+        self._file_menu.addAction(act)
+        self._menu_actions["export"] = act
 
-        analysis_menu = menubar.addMenu("&Analysis")
-        run_action = QAction("Run Analyze", self)
-        run_action.setShortcut("Ctrl+R")
-        run_action.triggered.connect(self._on_analyze)
-        analysis_menu.addAction(run_action)
+        self._file_menu.addSeparator()
+        act = QAction(self.tr("Quit"), self)
+        act.setShortcut(QKeySequence.Quit)
+        act.triggered.connect(self.close)
+        self._file_menu.addAction(act)
+        self._menu_actions["quit"] = act
 
-        help_menu = menubar.addMenu("&Help")
-        about_action = QAction("About fatAnalyze", self)
-        about_action.triggered.connect(self._on_about)
-        help_menu.addAction(about_action)
+        self._analysis_menu = menubar.addMenu(self.tr("&Analysis"))
+        act = QAction(self.tr("Run Analyze"), self)
+        act.setShortcut("Ctrl+R")
+        act.triggered.connect(self._on_analyze)
+        self._analysis_menu.addAction(act)
+        self._menu_actions["run_analyze"] = act
+
+        self._help_menu = menubar.addMenu(self.tr("&Help"))
+        act = QAction(self.tr("About fatAnalyze"), self)
+        act.triggered.connect(self._on_about)
+        self._help_menu.addAction(act)
+        self._menu_actions["about"] = act
 
     def _wire_signals(self) -> None:
-        # Toolbar → main window
         self.controls.open_folder_requested.connect(self._on_open_folder)
         self.controls.preset_changed.connect(self._on_preset_changed)
         self.controls.window_level_changed.connect(self.slice_view.set_window_level)
@@ -173,54 +163,71 @@ class FatAnalyzeWindow(QMainWindow):
         self.controls.save_roi_requested.connect(self._on_save_polygon)
         self.controls.analyze_requested.connect(self._on_analyze)
         self.controls.export_csv_requested.connect(self._on_export_csv)
-        # Slice slider
+        self.controls.language_changed.connect(self._on_language_changed)
         self.slice_slider.valueChanged.connect(self._on_slice_changed)
-        # ROI list
         self.roi_list.roi_selected.connect(self._on_roi_selected)
-        # Slice view polygon double-click closes the polygon
         self.slice_view.polygon_closed.connect(self._on_save_polygon)
+
+    # -- Language switching --------------------------------------------
+
+    def _on_language_changed(self, locale: str) -> None:
+        install_locale(QApplication.instance(), locale)
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        self.setWindowTitle(self.tr("fatAnalyze"))
+        self._file_menu.setTitle(self.tr("&File"))
+        self._analysis_menu.setTitle(self.tr("&Analysis"))
+        self._help_menu.setTitle(self.tr("&Help"))
+        self._menu_actions["open"].setText(self.tr("Open DICOM Folder…"))
+        self._menu_actions["export"].setText(self.tr("Export CSV…"))
+        self._menu_actions["quit"].setText(self.tr("Quit"))
+        self._menu_actions["run_analyze"].setText(self.tr("Run Analyze"))
+        self._menu_actions["about"].setText(self.tr("About fatAnalyze"))
+        self._slice_label_label.setText(self.tr("Slice:"))
+        self.statusBar().showMessage(self.tr("Open a DICOM folder to begin."))
+        self.controls.retranslate()
+        self.roi_list.retranslate()
+        self.results.retranslate()
 
     # -- slots ---------------------------------------------------------
 
     def _on_open_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(
-            self, "Open DICOM Folder", str(Path.cwd()),
+            self, self.tr("Open DICOM Folder"), str(Path.cwd()),
         )
         if not folder:
             return
         try:
             image, qc = load_ct_series(Path(folder))
         except Exception as exc:
-            QMessageBox.critical(self, "DICOM load failed", str(exc))
+            QMessageBox.critical(self, self.tr("DICOM load failed"), str(exc))
             return
         self._image = image
         self._qc = qc
         self.slice_view.set_image(image)
-        # Wire slider
         self.slice_slider.setRange(0, image.GetDepth() - 1)
         self.slice_slider.setValue(image.GetDepth() // 2)
         self.slice_slider.setEnabled(True)
         self.slice_label.setText(f"{self.slice_slider.value()+1} / {image.GetDepth()}")
-        # Reflect current W/L
         w, l = self.slice_view.get_window_level()
         self.controls.set_wl_sliders(w, l)
-        # Clear stale state
         self._active_polygon = None
         self._polygons_by_name.clear()
         self.roi_list.clear()
         self._results.clear()
         self.results.clear()
-        # Show QC report
         QMessageBox.information(
-            self, "DICOM QC",
+            self, self.tr("DICOM QC"),
             qc.summary() if hasattr(qc, "summary") else str(qc),
         )
         self.statusBar().showMessage(
-            f"Loaded {image.GetDepth()} slices from {folder}", 5000,
+            self.tr("Loaded {n} slices from {folder}").format(
+                n=image.GetDepth(), folder=folder
+            ), 5000,
         )
 
     def _on_preset_changed(self, preset: str) -> None:
-        # Color of the *next* polygon will use this preset
         if self._active_polygon is not None and self._active_polygon.vertex_count() == 0:
             self._active_polygon.set_color(PRESET_COLORS.get(preset, QColor(180, 180, 180)))
 
@@ -234,98 +241,95 @@ class FatAnalyzeWindow(QMainWindow):
     def _on_draw_toggled(self, on: bool) -> None:
         if not on:
             if self._active_polygon is not None and self._active_polygon.vertex_count() < 3:
-                # Discard empty polygon and any leaked handles
                 self._active_polygon.clear()
                 self.slice_view._scene.removeItem(self._active_polygon)
                 self._active_polygon = None
-            # Hand polygon mode back to the view; it will stop intercepting
-            # mouse events so the user can pan / zoom / adjust W/L again.
             self.slice_view.polygon_mode = False
             self.slice_view.active_polygon = None
             return
         if self._image is None:
-            QMessageBox.warning(self, "No image", "Open a DICOM folder first.")
+            QMessageBox.warning(self, self.tr("No image"),
+                                self.tr("Open a DICOM folder first."))
             self.controls.draw_btn.setChecked(False)
             return
-        # Start a new polygon
         preset = self.controls.current_preset()
         color = PRESET_COLORS.get(preset, QColor(180, 180, 180))
         self._active_polygon = PolygonItem(color=color)
         self.slice_view._scene.addItem(self._active_polygon)
-        # Hand the polygon to the view so its mousePressEvent / dblClick
-        # can drive the polygon directly (events never reach this window).
         self.slice_view.active_polygon = self._active_polygon
         self.slice_view.polygon_mode = True
         self.statusBar().showMessage(
-            f"Polygon drawing ON (preset: {preset}). "
-            f"Left-click to add vertices, double-click to close.",
+            self.tr("Polygon drawing ON (preset: {preset}). "
+                    "Left-click to add vertices, double-click to close.").format(
+                preset=preset
+            ),
         )
 
     def _on_clear_polygon(self) -> None:
         if self._active_polygon is None:
             return
         self._active_polygon.clear()
-        self.statusBar().showMessage("Polygon cleared.", 2000)
+        self.statusBar().showMessage(self.tr("Polygon cleared."), 2000)
 
     def _on_save_polygon(self) -> None:
         if self._active_polygon is None or self._active_polygon.vertex_count() < 3:
-            QMessageBox.information(self, "Save ROI",
-                                    "Draw at least 3 vertices first.")
+            QMessageBox.information(self, self.tr("Save ROI"),
+                                    self.tr("Draw at least 3 vertices first."))
             return
         self._active_polygon.close()
-        # Build a ROI object and add to list
         preset = self.controls.current_preset()
         default_name = f"{preset}"
-        name, ok = QInputDialog.getText(self, "Save ROI", "ROI name:", text=default_name)
+        name, ok = QInputDialog.getText(self, self.tr("Save ROI"),
+                                        self.tr("ROI name:"), text=default_name)
         if not ok or not name.strip():
             return
         name = name.strip()
         z = self.slice_view.z_index
-        roi = ROI(
-            name=name,
-            preset=preset,
-            z_index=z,
-            vertices=self._active_polygon.get_vertices(),
-        )
+        roi = ROI(name=name, preset=preset, z_index=z,
+                  vertices=self._active_polygon.get_vertices())
         self.roi_list.add_roi(roi)
         self._polygons_by_name[name] = self._active_polygon
         self._active_polygon = None
         self.controls.draw_btn.setChecked(False)
-        self.statusBar().showMessage(f"ROI '{name}' added ({len(roi.vertices)} vertices).",
-                                      4000)
+        self.statusBar().showMessage(
+            self.tr("ROI '{name}' added ({n} vertices).").format(
+                name=name, n=len(roi.vertices)
+            ), 4000,
+        )
 
     def _on_roi_selected(self, roi: ROI) -> None:
-        # When user clicks a row, show its metrics
         if roi.name in self._results:
             self.results.show_result(roi.name, self._results[roi.name])
 
     def _on_analyze(self) -> None:
         if self._image is None:
-            QMessageBox.warning(self, "No image", "Open a DICOM folder first.")
+            QMessageBox.warning(self, self.tr("No image"),
+                                self.tr("Open a DICOM folder first."))
             return
         rois = self.roi_list.get_rois()
         if not rois:
-            QMessageBox.information(self, "No ROIs", "Draw at least one ROI first.")
+            QMessageBox.information(self, self.tr("No ROIs"),
+                                    self.tr("Draw at least one ROI first."))
             return
         try:
             self._results = compute_for_rois(self._image, rois)
         except Exception as exc:
-            QMessageBox.critical(self, "Analyze failed", str(exc))
+            QMessageBox.critical(self, self.tr("Analyze failed"), str(exc))
             return
-        # Mark all analyzed
         for name in self._results:
             self.roi_list.mark_analyzed(name)
         self.results.show_all(self._results)
         self.statusBar().showMessage(
-            f"Analyzed {len(self._results)} ROI(s).", 4000,
+            self.tr("Analyzed {n} ROI(s).").format(n=len(self._results)), 4000,
         )
 
     def _on_export_csv(self) -> None:
         if not self._results:
-            QMessageBox.information(self, "No results", "Click 'Analyze' first.")
+            QMessageBox.information(self, self.tr("No results"),
+                                    self.tr("Click 'Analyze' first."))
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export metrics to CSV", "fatAnalyze-metrics.csv",
+            self, self.tr("Export metrics to CSV"), "fatAnalyze-metrics.csv",
             "CSV files (*.csv)",
         )
         if not path:
@@ -361,21 +365,23 @@ class FatAnalyzeWindow(QMainWindow):
                 w.writerows(rows)
         for name in self._results:
             self.roi_list.mark_exported(name)
-        self.statusBar().showMessage(f"Exported {len(rows)} rows to {path}", 5000)
+        self.statusBar().showMessage(
+            self.tr("Exported {n} rows to {path}").format(n=len(rows), path=path), 5000,
+        )
 
     def _on_about(self) -> None:
         QMessageBox.about(
-            self, "About fatAnalyze",
+            self, self.tr("About fatAnalyze"),
             "<b>fatAnalyze v0.3.0</b><br>"
-            "CT ectopic-fat analysis (liver, pancreas, psoas at L3).<br>"
-            "Native PySide6 GUI; the analysis pipeline is unchanged.<br><br>"
-            "DICOM → polygon ROI → HU stats + clinical metrics.",
+            + self.tr("CT ectopic-fat analysis (liver, pancreas, psoas at L3).") + "<br>"
+            + self.tr("Native PySide6 GUI; the analysis pipeline is unchanged.") + "<br><br>"
+            + self.tr("DICOM → polygon ROI → HU stats + clinical metrics.") + ".",
         )
 
     def _on_pixel_hovered(self, x: int, y: int, hu: float) -> None:
         if self._image is None:
             return
-        if hu != hu:  # NaN
+        if hu != hu:
             return
         self.statusBar().showMessage(
             f"x={x} y={y}  HU={hu:.1f}  z={self.slice_view.z_index+1}/{self._image.GetDepth()}",
@@ -388,6 +394,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     """Console-script entry point: ``fatanalyze-gui`` / ``python -m fatanalyze.gui``."""
     app = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("fatAnalyze")
+    install_locale(app, "zh_CN")
     win = FatAnalyzeWindow()
     win.show()
     return app.exec()
@@ -395,3 +402,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+__all__ = ["FatAnalyzeWindow", "main"]

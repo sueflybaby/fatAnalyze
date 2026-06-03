@@ -49,11 +49,11 @@ class ROIListWidget(QWidget):
 
         # Action buttons
         btn_row = QHBoxLayout()
-        self.rename_btn = QPushButton("Rename")
+        self.rename_btn = QPushButton(self.tr("Rename"))
         self.rename_btn.clicked.connect(self._on_rename)
         btn_row.addWidget(self.rename_btn)
 
-        self.delete_btn = QPushButton("Delete")
+        self.delete_btn = QPushButton(self.tr("Delete"))
         self.delete_btn.clicked.connect(self._on_delete)
         btn_row.addWidget(self.delete_btn)
 
@@ -140,14 +140,20 @@ class ROIListWidget(QWidget):
         roi = self.selected_roi()
         if roi is None:
             return
-        new_name, ok = QInputDialog.getText(self, "Rename ROI", "New name:", text=roi.name)
+        new_name, ok = QInputDialog.getText(
+            self, self.tr("Rename ROI"), self.tr("New name:"), text=roi.name
+        )
         if not ok or not new_name.strip():
             return
         new_name = new_name.strip()
         if new_name == roi.name:
             return
         if new_name in self._rois:
-            QMessageBox.warning(self, "Duplicate", f"ROI '{new_name}' already exists")
+            QMessageBox.warning(
+                self,
+                self.tr("Duplicate"),
+                self.tr("ROI '{name}' already exists").format(name=new_name),
+            )
             return
         del self._rois[roi.name]
         roi.name = new_name
@@ -160,11 +166,17 @@ class ROIListWidget(QWidget):
         if roi is None:
             return
         confirm = QMessageBox.question(
-            self, "Delete ROI",
-            f"Delete ROI '{roi.name}'?",
+            self,
+            self.tr("Delete ROI"),
+            self.tr("Delete ROI '{name}'?").format(name=roi.name),
         )
         if confirm == QMessageBox.Yes:
             self.remove_roi(roi.name)
+
+    def retranslate(self) -> None:
+        """Re-apply tr() to button labels."""
+        self.rename_btn.setText(self.tr("Rename"))
+        self.delete_btn.setText(self.tr("Delete"))
 
 
 __all__ = ["ROIListWidget"]

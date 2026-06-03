@@ -227,7 +227,9 @@ def test_polygon_state_machine(qapp):
 # ---------------------------------------------------------------------------
 
 def test_results_panel_format(qapp):
-    from fatanalyze.gui.results_panel import _format_metrics
+    from fatanalyze.gui.results_panel import ResultsPanel
+
+    panel = ResultsPanel()
 
     fake = {
         "target": "iliopsoas_left",
@@ -248,7 +250,7 @@ def test_results_panel_format(qapp):
             "myosteatosis_flag": False,
         },
     }
-    s = _format_metrics("L-Psoas", fake)
+    s = panel._format_metrics("L-Psoas", fake)
     assert "L-Psoas" in s
     assert "12.34 cm²" in s
     assert "1234" in s
