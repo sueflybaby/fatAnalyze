@@ -1,0 +1,22 @@
+# MR vendor presets for PDFF scale factor and Dixon series matching.
+presets:
+  Siemens (0-100):
+    pdff_scale_factor: 1.0
+    dixon:
+      fat_kw: ["FAT", "FAT ONLY", "F"]
+      water_kw: ["WATER", "WATER ONLY", "W"]
+  GE IDEAL (0-10000):
+    pdff_scale_factor: 0.01
+    dixon:
+      fat_kw: ["FAT"]
+      water_kw: ["WATER"]
+  Philips (0-100):
+    pdff_scale_factor: 1.0
+    dixon:
+      fat_kw: ["FAT"]
+      water_kw: ["WATER"]
+  Custom:
+    pdff_scale_factor: 1.0
+    dixon:
+      fat_kw: []
+      water_kw: []

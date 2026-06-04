@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fatanalyze.config import load_mr_presets
 from fatanalyze.gui.i18n import SUPPORTED_LOCALES, current_locale
 from fatanalyze.gui.slice_view import WL_PRESETS
 
@@ -35,8 +36,20 @@ PRESET_CHOICES: List[Tuple[str, str]] = [
 ]
 
 
+# MR vendor presets keys (from mr_presets.yaml)
+_MR_PRESET_KEYS: list[str] = []
+
+
+def _load_mr_preset_keys() -> list[str]:
+    global _MR_PRESET_KEYS
+    if not _MR_PRESET_KEYS:
+        presets = load_mr_presets()
+        _MR_PRESET_KEYS = list(presets.get("presets", {}).keys())
+    return _MR_PRESET_KEYS
+
+
 class ControlsBar(QToolBar):
-    """Single-row toolbar with preset, W/L, drawing actions, language.
+    """Single-row toolbar with modality toggle, preset, W/L, drawing, language.
 
     Signals
     -------
@@ -51,6 +64,10 @@ class ControlsBar(QToolBar):
     export_csv_requested
     language_changed(str)
         Emitted with the new locale code (e.g. ``"zh_CN"``).
+    modality_changed(str)
+        Emitted with the new modality (``"ct"`` or ``"mr"``).
+    mr_preset_changed(str)
+        Emitted when the MR vendor preset changes.
     """
 
     open_folder_requested = Signal()
@@ -63,16 +80,19 @@ class ControlsBar(QToolBar):
     analyze_requested = Signal()
     export_csv_requested = Signal()
     language_changed = Signal(str)
+    modality_changed = Signal(str)   # "ct" | "mr"
+    mr_preset_changed = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__("ROI Tools", parent)
         self.setMovable(False)
+        self._modality: str = "ct"
         # Track translatable widgets so retranslate() can re-apply tr()
         self._w_label: QLabel
         self._l_label: QLabel
         self._preset_label: QLabel
         self._wl_preset_label: QLabel
-        self._lang_label: QLabel
+        self._mr_preset_label: QLabel
         self._open_action = None
         self._clear_btn: QPushButton
         self._save_btn: QPushButton
@@ -81,6 +101,18 @@ class ControlsBar(QToolBar):
         self._build()
 
     def _build(self) -> None:
+        # --- Modality toggle button ---
+        self.modality_btn = QPushButton("CT")
+        self.modality_btn.setCheckable(True)
+        self.modality_btn.setFixedWidth(48)
+        self.modality_btn.setStyleSheet(
+            "QPushButton { font-weight: bold; }"
+            "QPushButton:checked { background-color: #4472C4; color: white; }"
+        )
+        self.modality_btn.toggled.connect(self._on_modality_toggled)
+        self.addWidget(self.modality_btn)
+        self.addSeparator()
+
         # --- Open folder ---
         self._open_action = self.addAction(self.tr("Open DICOM…"))
         self._open_action.triggered.connect(self.open_folder_requested.emit)
@@ -97,7 +129,7 @@ class ControlsBar(QToolBar):
         self.addWidget(self.preset_combo)
         self.addSeparator()
 
-        # --- W/L sliders ---
+        # --- W/L sliders (also used as FF% Range sliders in MR mode) ---
         self._w_label = QLabel(self.tr(" W "))
         self.addWidget(self._w_label)
         self.w_slider = QSlider(Qt.Horizontal)
@@ -116,7 +148,7 @@ class ControlsBar(QToolBar):
         self.l_slider.valueChanged.connect(self._emit_wl)
         self.addSeparator()
 
-        # --- W/L preset combo ---
+        # --- W/L preset combo (CT) ---
         self._wl_preset_label = QLabel(" " + self.tr("W/L Preset:") + " ")
         self.addWidget(self._wl_preset_label)
         self.wl_preset_combo = QComboBox()
@@ -125,6 +157,20 @@ class ControlsBar(QToolBar):
         self.wl_preset_combo.setCurrentIndex(0)
         self.wl_preset_combo.currentIndexChanged.connect(self._emit_wl_preset)
         self.addWidget(self.wl_preset_combo)
+
+        # --- MR vendor preset combo (hidden in CT mode) ---
+        self._mr_preset_label = QLabel(" " + self.tr("MR Preset:") + " ")
+        self.addWidget(self._mr_preset_label)
+        self.mr_preset_combo = QComboBox()
+        for key in _load_mr_preset_keys():
+            self.mr_preset_combo.addItem(key)
+        self.mr_preset_combo.setCurrentIndex(0)
+        self.mr_preset_combo.currentIndexChanged.connect(self._emit_mr_preset)
+        self.addWidget(self.mr_preset_combo)
+
+        for w in (self._mr_preset_label, self.mr_preset_combo):
+            w.hide()
+
         self.addSeparator()
 
         # --- Drawing actions ---
@@ -153,7 +199,59 @@ class ControlsBar(QToolBar):
         self._lang_btn.clicked.connect(self._toggle_language)
         self.addWidget(self._lang_btn)
 
+    # -- modality ----------------------------------------------------
+
+    @property
+    def current_modality(self) -> str:
+        return self._modality
+
+    def _on_modality_toggled(self, checked: bool) -> None:
+        self._modality = "mr" if checked else "ct"
+        self.modality_btn.setText("MR" if checked else "CT")
+        self._reconfigure_for_modality()
+        self.modality_changed.emit(self._modality)
+
+    def _reconfigure_for_modality(self) -> None:
+        is_mr = self._modality == "mr"
+        if is_mr:
+            self._w_label.setText(self.tr("FF Range"))
+            self._l_label.setText(self.tr("Center"))
+            self.w_slider.setRange(1, 100)
+            self.l_slider.setRange(0, 100)
+            self.w_slider.setValue(100)
+            self.l_slider.setValue(50)
+        else:
+            self._w_label.setText(self.tr(" W "))
+            self._l_label.setText(self.tr(" L "))
+            self.w_slider.setRange(1, 4000)
+            self.l_slider.setRange(-1000, 1000)
+            self.w_slider.setValue(400)
+            self.l_slider.setValue(40)
+
+        self._wl_preset_label.setVisible(not is_mr)
+        self.wl_preset_combo.setVisible(not is_mr)
+        self._mr_preset_label.setVisible(is_mr)
+        self.mr_preset_combo.setVisible(is_mr)
+
+        self._emit_wl()
+
+    def set_modality(self, modality: str) -> None:
+        """Programmatically set the modality (``"ct"`` or ``"mr"``)."""
+        if modality == self._modality:
+            return
+        self._modality = modality
+        is_mr = modality == "mr"
+        self.modality_btn.blockSignals(True)
+        self.modality_btn.setChecked(is_mr)
+        self.modality_btn.setText("MR" if is_mr else "CT")
+        self.modality_btn.blockSignals(False)
+        self._reconfigure_for_modality()
+        self.modality_changed.emit(modality)
+
     # -- signal emitters ----------------------------------------------
+
+    def _emit_mr_preset(self, _idx: int) -> None:
+        self.mr_preset_changed.emit(self.current_mr_preset())
 
     def _emit_preset(self, _idx: int) -> None:
         self.preset_changed.emit(self.current_preset())
@@ -178,6 +276,10 @@ class ControlsBar(QToolBar):
         self.language_changed.emit(target)
 
     # -- public API ----------------------------------------------------
+
+    def current_mr_preset(self) -> str:
+        data = self.mr_preset_combo.currentText()
+        return data if data else _load_mr_preset_keys()[0]
 
     def set_wl_sliders(self, w: float, l: float) -> None:
         self.w_slider.blockSignals(True)
@@ -215,10 +317,13 @@ class ControlsBar(QToolBar):
         if self._open_action is not None:
             self._open_action.setText(self.tr("Open DICOM…"))
 
+        self.modality_btn.setText("MR" if self._modality == "mr" else "CT")
         self._preset_label.setText(" " + self.tr("Preset:") + " ")
-        self._w_label.setText(self.tr(" W "))
-        self._l_label.setText(self.tr(" L "))
+        is_mr = self._modality == "mr"
+        self._w_label.setText(self.tr("FF Range") if is_mr else self.tr(" W "))
+        self._l_label.setText(self.tr("Center") if is_mr else self.tr(" L "))
         self._wl_preset_label.setText(" " + self.tr("W/L Preset:") + " ")
+        self._mr_preset_label.setText(" " + self.tr("MR Preset:") + " ")
 
         # Preset combo: re-add items with new translations
         current_key = self.current_preset()

@@ -16,8 +16,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import SimpleITK as sitk
 
 
@@ -281,4 +282,264 @@ def make_synthetic_ct(
     return img
 
 
-__all__ = ["load_ct_series", "QCReport", "make_synthetic_ct"]
+# ── MR (PDFF / Dixon) loader ──────────────────────────────────────────────
+
+
+def _series_description(reader: sitk.ImageFileReader, file_name: str) -> str:
+    """Read SeriesDescription from a single DICOM file's metadata."""
+    try:
+        reader.SetFileName(file_name)
+        reader.LoadPrivateTagsOn()
+        reader.ReadImageInformation()
+        desc = reader.GetMetaData("0008|103e")
+        return (desc or "").strip().upper()
+    except RuntimeError:
+        return ""
+
+
+def _load_series_from_files(file_names: List[str]) -> sitk.Image:
+    """Load a list of DICOM files as a 3D volume (like ImageSeriesReader)."""
+    reader = sitk.ImageSeriesReader()
+    reader.SetFileNames(file_names)
+    reader.MetaDataDictionaryArrayUpdateOn()
+    reader.LoadPrivateTagsOn()
+    try:
+        return reader.Execute()
+    except RuntimeError as exc:
+        if "IO region that does not fully contain" in str(exc):
+            return _load_and_normalize_slices(file_names)
+        raise
+
+
+def _find_mr_series(
+    dicom_dir: str | Path,
+    kw_list: List[str],
+    file_reader: sitk.ImageFileReader,
+) -> List[str]:
+    """Find DICOM series whose SeriesDescription matches one of the keywords.
+
+    Returns the file list of the first matching series, or an empty list.
+    """
+    p = Path(dicom_dir)
+    series_reader = sitk.ImageSeriesReader()
+    for uid in series_reader.GetGDCMSeriesIDs(str(p)):
+        fnames = series_reader.GetGDCMSeriesFileNames(str(p), uid)
+        if not fnames:
+            continue
+        desc = _series_description(file_reader, fnames[0])
+        if any(kw in desc for kw in kw_list):
+            return fnames
+    return []
+
+
+def _list_all_series(
+    dicom_dir: str | Path,
+) -> List[Tuple[str, str, List[str]]]:
+    """List all DICOM series in the folder.
+
+    Returns list of ``(series_uid, series_description, file_names)``.
+    """
+    p = Path(dicom_dir)
+    reader = sitk.ImageSeriesReader()
+    file_reader = sitk.ImageFileReader()
+    series: List[Tuple[str, str, List[str]]] = []
+    for uid in reader.GetGDCMSeriesIDs(str(p)):
+        fnames = reader.GetGDCMSeriesFileNames(str(p), uid)
+        desc = _series_description(file_reader, fnames[0]) if fnames else ""
+        series.append((uid, desc, fnames))
+    return series
+
+
+def _load_pdff_series(
+    dicom_dir: str | Path,
+    scale_factor: float = 1.0,
+) -> sitk.Image:
+    """Load a single MR PDFF parameter-map series.
+
+    The pixel values are scaled by *scale_factor* so they represent
+    0-100 % fat fraction.
+    """
+    p = Path(dicom_dir)
+    reader = sitk.ImageSeriesReader()
+    uids = reader.GetGDCMSeriesIDs(str(p))
+    if not uids:
+        raise RuntimeError(f"No DICOM series found in {p}")
+    if len(uids) > 1:
+        raise RuntimeError(
+            f"Multiple DICOM series in {p}; PDFF mode expects a single series."
+        )
+    fnames = reader.GetGDCMSeriesFileNames(str(p), uids[0])
+    image = _load_series_from_files(fnames)
+
+    if abs(scale_factor - 1.0) > 1e-6:
+        arr = sitk.GetArrayFromImage(image).astype(np.float32) * scale_factor
+        out = sitk.GetImageFromArray(arr)
+        out.CopyInformation(image)
+        image = out
+
+    return image
+
+
+def _compute_fat_fraction(
+    fat_img: sitk.Image,
+    water_img: sitk.Image,
+) -> sitk.Image:
+    """Compute pixel-wise fat fraction: ``FF = fat / (fat + water) * 100``.
+
+    Regions where ``fat + water == 0`` are set to 0 %.
+    """
+    fat_arr = sitk.GetArrayFromImage(fat_img).astype(np.float64)
+    water_arr = sitk.GetArrayFromImage(water_img).astype(np.float64)
+    denom = fat_arr + water_arr
+    mask = denom > 0
+    ff_arr = np.zeros_like(denom)
+    ff_arr[mask] = np.clip(fat_arr[mask] / denom[mask] * 100.0, 0.0, 100.0)
+    out = sitk.GetImageFromArray(ff_arr.astype(np.float32))
+    out.CopyInformation(fat_img)
+    return out
+
+
+def load_mr_series(
+    dicom_dir: str | Path,
+    preset_cfg: Optional[Dict[str, Any]] = None,
+) -> Tuple[sitk.Image, QCReport]:
+    """Load an MR fat-quantification series.
+
+    Supports two modes (auto-detected from the folder contents):
+
+    * **PDFF** – single series; pixel values are scaled according to the
+      vendor preset to produce 0-100 % fat fraction.
+    * **Dixon** – two series (fat-only / water-only); the pair is matched
+      by SeriesDescription keywords from the preset, then
+      :func:`_compute_fat_fraction` is applied.
+
+    Parameters
+    ----------
+    dicom_dir : str or Path
+        Folder containing one DICOM series (PDFF) or two (Dixon).
+    preset_cfg : dict, optional
+        Vendor-preset dict with keys ``pdff_scale_factor`` and
+        ``dixon`` (with sub-keys ``fat_kw`` / ``water_kw``).
+        Defaults to ``"Siemens (0-100)"``.
+
+    Returns
+    -------
+    image : sitk.Image
+        3D volume where pixel values are fat fraction in 0-100 %.
+    qc : QCReport
+        Quality-control summary (MR-aware).
+    """
+    if preset_cfg is None:
+        from fatanalyze.config import load_mr_presets
+        presets = load_mr_presets()
+        preset_cfg = presets.get("presets", {}).get("Siemens (0-100)", {})
+
+    scale_factor = float(preset_cfg.get("pdff_scale_factor", 1.0))
+    dixon_cfg = preset_cfg.get("dixon", {})
+    fat_kw: List[str] = dixon_cfg.get("fat_kw", [])
+    water_kw: List[str] = dixon_cfg.get("water_kw", [])
+
+    p = Path(dicom_dir)
+    all_series = _list_all_series(p)
+
+    if len(all_series) == 1:
+        # ── PDFF: single series ───────────────────────────────────
+        image = _load_pdff_series(p, scale_factor)
+        qc = _mr_qcreport(image, "PDFF")
+        return image, qc
+
+    if len(all_series) >= 2:
+        # ── Dixon: two series matched by keyword ──────────────────
+        # Build a quick file reader for description matching
+        file_reader = sitk.ImageFileReader()
+        fat_files = _find_mr_series(p, fat_kw, file_reader)
+        water_files = _find_mr_series(p, water_kw, file_reader)
+
+        if not fat_files or not water_files:
+            # Fall back: let user manually choose
+            choices = "\n".join(
+                f"  {i+1}. {uid[:12]}… — {desc or '(no description)'}"
+                for i, (uid, desc, _) in enumerate(all_series)
+            )
+            raise RuntimeError(
+                f"Could not auto-match fat/water series in folder.\n"
+                f"Available series:\n{choices}\n\n"
+                f"Fat keywords: {fat_kw}\nWater keywords: {water_kw}"
+            )
+
+        fat_img = _load_series_from_files(fat_files)
+        water_img = _load_series_from_files(water_files)
+
+        if fat_img.GetSize()[:2] != water_img.GetSize()[:2]:
+            raise RuntimeError(
+                f"Fat ({fat_img.GetSize()[:2]}) and water "
+                f"({water_img.GetSize()[:2]}) series have different XY sizes."
+            )
+        if fat_img.GetDepth() != water_img.GetDepth():
+            raise RuntimeError(
+                f"Fat ({fat_img.GetDepth()} slices) and water "
+                f"({water_img.GetDepth()} slices) have different depths."
+            )
+
+        image = _compute_fat_fraction(fat_img, water_img)
+        qc = _mr_qcreport(image, "Dixon")
+        return image, qc
+
+    raise RuntimeError(f"No DICOM series found in {p}")
+
+
+def _mr_qcreport(image: sitk.Image, series_type: str) -> QCReport:
+    """Build a QC report for an MR fat-fraction image."""
+    size = image.GetSize()
+    spacing = image.GetSpacing()
+    arr = sitk.GetArrayFromImage(image)
+
+    z_spacings = _slice_z_spacings(image)
+    mean_dz = sum(z_spacings) / len(z_spacings) if z_spacings else 0.0
+    var_dz = sum((d - mean_dz) ** 2 for d in z_spacings) / len(z_spacings) \
+        if z_spacings else 0.0
+    cv_dz = (var_dz ** 0.5) / mean_dz if mean_dz > 0 else 0.0
+
+    rep = QCReport(
+        n_slices=size[2],
+        size_xyz=(size[0], size[1], size[2]),
+        spacing_xyz=(float(spacing[0]), float(spacing[1]), float(spacing[2])),
+        modality="MR",
+        series_uid=f"MR-{series_type}",
+        slice_spacing_cv=cv_dz,
+        hu_min=float(arr.min()),
+        hu_max=float(arr.max()),
+        direction_canonical=False,
+    )
+
+    rep.warnings.append(f"MR {series_type} fat-fraction map (0-100%)")
+
+    ff = arr.flatten()
+    ff_min = float(ff.min())
+    ff_max = float(ff.max())
+    if ff_min < -1.0:
+        rep.warnings.append(
+            f"Fat-fraction min = {ff_min:.1f}%; possible scale issue"
+        )
+    if ff_max > 105.0:
+        rep.warnings.append(
+            f"Fat-fraction max = {ff_max:.1f}%; possible scale issue"
+        )
+
+    if 0 < ff_max < 1.0:
+        rep.warnings.append(
+            "Fat-fraction range looks like a 0-1 scale (expected 0-100). "
+            "Check vendor preset / scale factor."
+        )
+
+    if cv_dz > _Z_SPACING_CV_THRESHOLD:
+        rep.warnings.append(
+            f"Z-spacing CV = {cv_dz*100:.1f}% "
+            f"(>{_Z_SPACING_CV_THRESHOLD*100:.0f}%). "
+            "Slice thickness inconsistent; resample before analysis."
+        )
+
+    return rep
+
+
+__all__ = ["load_ct_series", "load_mr_series", "QCReport", "make_synthetic_ct"]

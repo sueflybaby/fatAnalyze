@@ -8,6 +8,7 @@ from typing import Any, Dict
 import yaml
 
 _DEFAULT_CONFIG_PATH = Path(__file__).parent / "config" / "targets.yaml"
+_MR_PRESETS_PATH = Path(__file__).parent / "config" / "mr_presets.yaml"
 
 
 @lru_cache(maxsize=1)
@@ -18,6 +19,12 @@ def load_default_config() -> Dict[str, Any]:
     custom configs.
     """
     return load_config_from(_DEFAULT_CONFIG_PATH)
+
+
+@lru_cache(maxsize=1)
+def load_mr_presets() -> Dict[str, Any]:
+    """Load the bundled mr_presets.yaml as a dict."""
+    return load_config_from(_MR_PRESETS_PATH)
 
 
 def load_config_from(path: str | Path) -> Dict[str, Any]:

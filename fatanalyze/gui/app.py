@@ -28,15 +28,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fatanalyze.config import load_mr_presets
+from fatanalyze.modality import Modality
 from fatanalyze.gui.controls import ControlsBar
 from fatanalyze.gui.i18n import install_locale, current_locale, SUPPORTED_LOCALES, reset_for_test
-from fatanalyze.gui.metrics_runner import compute_for_rois, rasterize
+from fatanalyze.gui.metrics_runner import compute_for_rois, compute_for_rois_mr, rasterize
 from fatanalyze.gui.polygon_item import PolygonItem
 from fatanalyze.gui.results_panel import ResultsPanel
 from fatanalyze.gui.roi import ROI
 from fatanalyze.gui.roi_list import ROIListWidget
 from fatanalyze.gui.slice_view import SliceView
-from fatanalyze.io.dicom_loader import load_ct_series
+from fatanalyze.io.dicom_loader import load_ct_series, load_mr_series
 from fatanalyze.interactive.user_roi import UserROI
 
 
@@ -58,6 +60,7 @@ class FatAnalyzeWindow(QMainWindow):
 
         self._image: Optional[sitk.Image] = None
         self._qc = None
+        self._modality: Modality = Modality.CT
         self._active_polygon: Optional[PolygonItem] = None
         self._polygons_by_name: Dict[str, PolygonItem] = {}
         self._results: Dict[str, dict] = {}
@@ -166,12 +169,32 @@ class FatAnalyzeWindow(QMainWindow):
         self.controls.analyze_requested.connect(self._on_analyze)
         self.controls.export_csv_requested.connect(self._on_export_csv)
         self.controls.language_changed.connect(self._on_language_changed)
+        self.controls.modality_changed.connect(self._on_modality_changed)
         self.slice_slider.valueChanged.connect(self._on_slice_changed)
         self.slice_view.slice_changed.connect(self._on_view_slice_changed)
         self.roi_list.roi_selected.connect(self._on_roi_selected)
         self.slice_view.polygon_closed.connect(self._on_save_polygon)
 
     # -- Language switching --------------------------------------------
+
+    def _on_modality_changed(self, mod: str) -> None:
+        self._modality = Modality(mod)
+        # Clear image when switching modality
+        self._image = None
+        self._qc = None
+        self._results.clear()
+        self.results.clear()
+        self.roi_list.clear()
+        self._polygons_by_name.clear()
+        self._active_polygon = None
+        self.slice_slider.setRange(0, 0)
+        self.slice_slider.setEnabled(False)
+        self.slice_label.setText(self.tr("— / —"))
+        self.statusBar().showMessage(
+            self.tr("Switched to {mode} mode. Open a folder to begin.").format(
+                mode="MR" if mod == "mr" else "CT"
+            )
+        )
 
     def _on_language_changed(self, locale: str) -> None:
         install_locale(QApplication.instance(), locale)
@@ -202,9 +225,20 @@ class FatAnalyzeWindow(QMainWindow):
         if not folder:
             return
         try:
-            image, qc = load_ct_series(Path(folder))
+            if self._modality == Modality.MR:
+                preset_cfg = None
+                try:
+                    from fatanalyze.config import load_mr_presets
+                    mr_presets = load_mr_presets()
+                    mr_preset_name = self.controls.current_mr_preset()
+                    preset_cfg = mr_presets.get("presets", {}).get(mr_preset_name, {})
+                except Exception:
+                    pass
+                image, qc = load_mr_series(Path(folder), preset_cfg)
+            else:
+                image, qc = load_ct_series(Path(folder))
         except Exception as exc:
-            QMessageBox.critical(self, self.tr("DICOM load failed"), str(exc))
+            QMessageBox.critical(self, self.tr("Load failed"), str(exc))
             return
         self._image = image
         self._qc = qc
@@ -220,6 +254,11 @@ class FatAnalyzeWindow(QMainWindow):
         self.roi_list.clear()
         self._results.clear()
         self.results.clear()
+        if self._modality == Modality.MR:
+            self.slice_view.set_window_level(100.0, 50.0)
+            self.controls.set_wl_sliders(100, 50)
+            self.controls._w_label.setText(self.tr("FF Range"))
+            self.controls._l_label.setText(self.tr("Center"))
         QMessageBox.information(
             self, self.tr("DICOM QC"),
             qc.summary() if hasattr(qc, "summary") else str(qc),
@@ -323,13 +362,16 @@ class FatAnalyzeWindow(QMainWindow):
                                     self.tr("Draw at least one ROI first."))
             return
         try:
-            self._results = compute_for_rois(self._image, rois)
+            if self._modality == Modality.MR:
+                self._results = compute_for_rois_mr(self._image, rois)
+            else:
+                self._results = compute_for_rois(self._image, rois)
         except Exception as exc:
             QMessageBox.critical(self, self.tr("Analyze failed"), str(exc))
             return
         for name in self._results:
             self.roi_list.mark_analyzed(name)
-        self.results.show_all(self._results)
+        self.results.show_all(self._results, self._modality)
         self.statusBar().showMessage(
             self.tr("Analyzed {n} ROI(s).").format(n=len(self._results)), 4000,
         )
@@ -345,29 +387,47 @@ class FatAnalyzeWindow(QMainWindow):
         )
         if not path:
             return
+        is_mr = self._modality == Modality.MR
         rows = []
         for name, r in self._results.items():
-            row = {
-                "name": name,
-                "target": r.get("target", ""),
-                "n_voxels": r.get("n_voxels", 0),
-                "area_cm2": f"{r.get('area_cm2', 0):.4f}",
-                "volume_ml": f"{r.get('volume_ml', 0):.4f}",
-                "mean_hu": f"{r.get('mean_hu', float('nan')):.2f}",
-                "median_hu": f"{r.get('median_hu', float('nan')):.2f}",
-                "std_hu": f"{r.get('std_hu', float('nan')):.2f}",
-                "p05_hu": f"{r.get('p05_hu', float('nan')):.2f}",
-                "p95_hu": f"{r.get('p95_hu', float('nan')):.2f}",
-                "clinical_flags": ";".join(r.get("clinical_flags") or []),
-            }
-            for k, v in (r.get("ratios") or {}).items():
-                row[f"ratio_{k}"] = f"{v:.4f}" if isinstance(v, (int, float)) else v
-            pm = r.get("psoas_metrics")
-            if pm:
-                row["imat_fraction"] = f"{pm.get('imat_fraction', 0):.4f}"
-                row["low_density_fraction"] = f"{pm.get('low_density_fraction', 0):.4f}"
-                row["normal_muscle_fraction"] = f"{pm.get('normal_muscle_fraction', 0):.4f}"
-                row["myosteatosis_flag"] = pm.get("myosteatosis_flag", False)
+            if is_mr:
+                row = {
+                    "name": name,
+                    "target": r.get("target", ""),
+                    "n_voxels": r.get("n_voxels", 0),
+                    "area_cm2": f"{r.get('area_cm2', 0):.4f}",
+                    "volume_ml": f"{r.get('volume_ml', 0):.4f}",
+                    "mean_ff": f"{r.get('mean_ff', float('nan')):.2f}",
+                    "median_ff": f"{r.get('median_ff', float('nan')):.2f}",
+                    "std_ff": f"{r.get('std_ff', float('nan')):.2f}",
+                    "p05_ff": f"{r.get('p05_ff', float('nan')):.2f}",
+                    "p95_ff": f"{r.get('p95_ff', float('nan')):.2f}",
+                    "clinical_flags": ";".join(r.get("clinical_flags") or []),
+                }
+                for k, v in (r.get("ff_bins") or {}).items():
+                    row[f"ffbin_{k}"] = f"{v*100:.2f}%" if isinstance(v, (int, float)) else v
+            else:
+                row = {
+                    "name": name,
+                    "target": r.get("target", ""),
+                    "n_voxels": r.get("n_voxels", 0),
+                    "area_cm2": f"{r.get('area_cm2', 0):.4f}",
+                    "volume_ml": f"{r.get('volume_ml', 0):.4f}",
+                    "mean_hu": f"{r.get('mean_hu', float('nan')):.2f}",
+                    "median_hu": f"{r.get('median_hu', float('nan')):.2f}",
+                    "std_hu": f"{r.get('std_hu', float('nan')):.2f}",
+                    "p05_hu": f"{r.get('p05_hu', float('nan')):.2f}",
+                    "p95_hu": f"{r.get('p95_hu', float('nan')):.2f}",
+                    "clinical_flags": ";".join(r.get("clinical_flags") or []),
+                }
+                for k, v in (r.get("ratios") or {}).items():
+                    row[f"ratio_{k}"] = f"{v:.4f}" if isinstance(v, (int, float)) else v
+                pm = r.get("psoas_metrics")
+                if pm:
+                    row["imat_fraction"] = f"{pm.get('imat_fraction', 0):.4f}"
+                    row["low_density_fraction"] = f"{pm.get('low_density_fraction', 0):.4f}"
+                    row["normal_muscle_fraction"] = f"{pm.get('normal_muscle_fraction', 0):.4f}"
+                    row["myosteatosis_flag"] = pm.get("myosteatosis_flag", False)
             rows.append(row)
         if rows:
             with open(path, "w", newline="", encoding="utf-8") as f:
@@ -383,20 +443,29 @@ class FatAnalyzeWindow(QMainWindow):
     def _on_about(self) -> None:
         QMessageBox.about(
             self, self.tr("About fatAnalyze"),
-            "<b>fatAnalyze v0.3.0</b><br>"
+            "<b>fatAnalyze v0.4.0</b><br>"
             + self.tr("CT ectopic-fat analysis (liver, pancreas, psoas at L3).") + "<br>"
             + self.tr("Native PySide6 GUI; the analysis pipeline is unchanged.") + "<br><br>"
-            + self.tr("DICOM → polygon ROI → HU stats + clinical metrics.") + ".",
+            + self.tr("DICOM → polygon ROI → HU stats + clinical metrics.")
+            + "<br><br>"
+            + self.tr("MR PDFF/Dixon fat fraction support (FF% stats + steatosis grading)."),
         )
 
-    def _on_pixel_hovered(self, x: int, y: int, hu: float) -> None:
+    def _on_pixel_hovered(self, x: int, y: int, val: float) -> None:
         if self._image is None:
             return
-        if hu != hu:
+        if val != val:
             return
-        self.statusBar().showMessage(
-            f"x={x} y={y}  HU={hu:.1f}  z={self.slice_view.z_index+1}/{self._image.GetDepth()}",
-        )
+        if self._modality == Modality.MR:
+            self.statusBar().showMessage(
+                f"x={x} y={y}  FF%={val:.1f}  "
+                f"z={self.slice_view.z_index+1}/{self._image.GetDepth()}",
+            )
+        else:
+            self.statusBar().showMessage(
+                f"x={x} y={y}  HU={val:.1f}  "
+                f"z={self.slice_view.z_index+1}/{self._image.GetDepth()}",
+            )
 
 
 # -- entry point ---------------------------------------------------------

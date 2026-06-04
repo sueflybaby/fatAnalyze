@@ -124,4 +124,27 @@ def compute_for_rois(
     return results
 
 
-__all__ = ["compute_for_rois", "rasterize", "PSOAS_PRESETS"]
+def compute_for_rois_mr(
+    image: sitk.Image,
+    rois: List[ROI],
+) -> Dict[str, dict]:
+    """Compute MR fat-fraction metrics for a list of ROIs.
+
+    Unlike the CT pipeline there is no combined psoas (the MR clinical
+    logic is simpler), so each ROI is analyzed independently.
+    """
+    from fatanalyze.interactive.analyze_mr import analyze_mr_roi
+
+    results: Dict[str, dict] = {}
+    for roi in rois:
+        if roi.mask is None:
+            rasterize(roi, image)
+        uroi = _user_roi_from(roi)
+        result = analyze_mr_roi(image, uroi)
+        results[roi.name] = result
+        roi.result = result
+        roi.status = "analyzed"
+    return results
+
+
+__all__ = ["compute_for_rois", "compute_for_rois_mr", "rasterize", "PSOAS_PRESETS"]

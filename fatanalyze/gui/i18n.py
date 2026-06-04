@@ -85,7 +85,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # --- Status / hover ---
         "Open a DICOM folder to begin.": "打开 DICOM 文件夹开始。",
         "ROI cleared.": "已清空 ROI 勾画。",
-        "DICOM load failed": "DICOM 加载失败",
+        "Load failed": "加载失败",
         "DICOM QC": "DICOM 质控",
         "No image": "未加载图像",
         "Open a DICOM folder first.": "请先打开 DICOM 文件夹。",
@@ -110,6 +110,27 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "CT ectopic-fat analysis (liver, pancreas, psoas at L3).": "CT 异位脂肪分析（肝、胰、L3 水平腰大肌）。",
         "Native PySide6 GUI; the analysis pipeline is unchanged.": "原生 PySide6 GUI；分析管线保持不变。",
         "DICOM → polygon ROI → HU stats + clinical metrics.": "DICOM → 多边形 ROI → HU 统计 + 临床指标。",
+        "MR PDFF/Dixon fat fraction support (FF% stats + steatosis grading).": "MR PDFF/Dixon 脂肪分数支持（FF% 统计 + 脂肪变性分级）。",
+
+        # --- MR keys ---
+        "MR": "MR",
+        "FF Range": "FF 范围",
+        "Center": "中心",
+        "MR Preset:": "MR 预设:",
+        "Switched to {mode} mode. Open a folder to begin.": "已切换到 {mode} 模式，请打开文件夹开始。",
+        "Loaded {n} slices from {folder}": "已从 {folder} 加载 {n} 层切片",
+
+        # --- MR Fat Fraction ---
+        "Fat Fraction Bins:": "脂肪分数区间:",
+        "Fat Fraction (%)": "脂肪分数 (%)",
+        "mean_ff": "平均 FF%",
+        "Steatosis: S0 (normal)": "脂肪变性: S0（正常）",
+        "Steatosis: S1 (mild)": "脂肪变性: S1（轻度）",
+        "Steatosis: S2 (moderate)": "脂肪变性: S2（中度）",
+        "Steatosis: S3 (severe)": "脂肪变性: S3（重度）",
+        "Myosteatosis (FF > 25%)": "肌少性脂肪变性（FF > 25%）",
+        "Pancreatic steatosis (FF > 10%)": "胰腺脂肪变性（FF > 10%）",
+        "Splenic steatosis (FF > 10%)": "脾脏脂肪变性（FF > 10%）",
 
         # --- Metric formatting keys ---
         "(none)": "(无)",
