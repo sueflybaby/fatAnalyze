@@ -1,9 +1,13 @@
-"""Top toolbar: modality toggle, Open, Analyze, Export CSV, Language.
+"""Top toolbar: Modality toggle, Open, [spacer], Export CSV, Language.
 
 Lower-frequency controls (preset, W/L, MR preset, ROI draw/clear/save)
 now live in :class:`fatanalyze.gui.control_panel.ControlPanel` on the
-left side of the main window. This file keeps the high-level actions
+left side of the main window. The "Analyze" button now sits in the
+ROI list panel header. This toolbar keeps only the high-level actions
 the user reaches for most often.
+
+Layout (left → right):
+    Modality: [CT] | Open DICOM…   ←expandable→   Export CSV | 中文
 
 Strings are wrapped with ``self.tr(...)`` so they pick up the active
 locale. ``retranslate()`` re-applies all tr() calls after the user
@@ -12,18 +16,23 @@ switches language.
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QPushButton, QToolBar
+from PySide6.QtWidgets import (
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QToolBar,
+    QWidget,
+)
 
 from fatanalyze.gui.i18n import SUPPORTED_LOCALES, current_locale
 
 
 class ControlsBar(QToolBar):
-    """Minimal top toolbar: modality, open, analyze, export, language.
+    """Top toolbar: modality, open, [spacer], export, language.
 
     Signals
     -------
     open_folder_requested
-    analyze_requested
     export_csv_requested
     language_changed(str)
         Emitted with the new locale code (e.g. ``"zh_CN"``).
@@ -32,7 +41,6 @@ class ControlsBar(QToolBar):
     """
 
     open_folder_requested = Signal()
-    analyze_requested = Signal()
     export_csv_requested = Signal()
     language_changed = Signal(str)
     modality_changed = Signal(str)   # "ct" | "mr"
@@ -42,12 +50,16 @@ class ControlsBar(QToolBar):
         self.setMovable(False)
         self._modality: str = "ct"
         self._open_action = None
-        self._analyze_btn: QPushButton
+        self._modality_label: QLabel
         self._export_btn: QPushButton
         self._build()
 
     def _build(self) -> None:
-        # --- Modality toggle button ---
+        # --- Left: Modality label + toggle button ---
+        self._modality_label = QLabel(self.tr("Modality:"))
+        self._modality_label.setMinimumWidth(60)
+        self.addWidget(self._modality_label)
+
         self.modality_btn = QPushButton("CT")
         self.modality_btn.setCheckable(True)
         self.modality_btn.setFixedWidth(56)
@@ -62,20 +74,21 @@ class ControlsBar(QToolBar):
         # --- Open folder ---
         self._open_action = self.addAction(self.tr("Open DICOM…"))
         self._open_action.triggered.connect(self.open_folder_requested.emit)
-        self.addSeparator()
 
-        # --- Analyze ---
-        self._analyze_btn = QPushButton(self.tr("Analyze"))
-        self._analyze_btn.clicked.connect(self.analyze_requested.emit)
-        self.addWidget(self._analyze_btn)
+        # --- Spacer pushes the rest to the right ---
+        # QSizePolicy.Policy values: Expanding=7, Preferred=5
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding,
+                             QSizePolicy.Policy.Preferred)
+        self.addWidget(spacer)
 
-        # --- Export CSV ---
+        # --- Right: Export CSV ---
         self._export_btn = QPushButton(self.tr("Export CSV"))
         self._export_btn.clicked.connect(self.export_csv_requested.emit)
         self.addWidget(self._export_btn)
         self.addSeparator()
 
-        # --- Language toggle button ---
+        # --- Right: Language toggle button ---
         self._lang_btn = QPushButton()
         self._update_lang_btn_text()
         self._lang_btn.clicked.connect(self._toggle_language)
@@ -129,10 +142,11 @@ class ControlsBar(QToolBar):
         self.setWindowTitle(self.tr("ROI Tools"))
         if self._open_action is not None:
             self._open_action.setText(self.tr("Open DICOM…"))
+        self._modality_label.setText(self.tr("Modality:"))
         self.modality_btn.setText("MR" if self._modality == "mr" else "CT")
-        self._analyze_btn.setText(self.tr("Analyze"))
         self._export_btn.setText(self.tr("Export CSV"))
         self._update_lang_btn_text()
 
 
 __all__ = ["ControlsBar"]
+

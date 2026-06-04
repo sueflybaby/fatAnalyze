@@ -1,4 +1,4 @@
-"""Multi-ROI list widget with save/load/delete."""
+"""Multi-ROI list widget with save/load/delete and Analyze action."""
 from __future__ import annotations
 
 from typing import Dict, List, Optional
@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
     QInputDialog,
+    QLabel,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -28,10 +29,13 @@ class ROIListWidget(QWidget):
         Emitted when the user clicks a row (or selects via keyboard).
     rois_changed()
         Emitted whenever the list is mutated.
+    analyze_requested()
+        Emitted when the user clicks the Analyze button in the header.
     """
 
     roi_selected = Signal(object)  # ROI
     rois_changed = Signal()
+    analyze_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -42,12 +46,31 @@ class ROIListWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        # --- Header: title + Analyze button ---
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(6)
+        self._title_label = QLabel(self.tr("ROIs"))
+        font = self._title_label.font()
+        font.setBold(True)
+        self._title_label.setFont(font)
+        header_row.addWidget(self._title_label, 1)
+
+        self.analyze_btn = QPushButton(self.tr("Analyze"))
+        self.analyze_btn.setDefault(False)
+        self.analyze_btn.setAutoDefault(False)
+        self.analyze_btn.clicked.connect(self.analyze_requested.emit)
+        header_row.addWidget(self.analyze_btn)
+
+        layout.addLayout(header_row)
+
+        # --- List ---
         self.list_widget = QListWidget(self)
         self.list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
         self.list_widget.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self.list_widget, 1)
 
-        # Action buttons
+        # --- Footer: Rename / Delete ---
         btn_row = QHBoxLayout()
         self.rename_btn = QPushButton(self.tr("Rename"))
         self.rename_btn.clicked.connect(self._on_rename)
@@ -175,6 +198,8 @@ class ROIListWidget(QWidget):
 
     def retranslate(self) -> None:
         """Re-apply tr() to button labels."""
+        self._title_label.setText(self.tr("ROIs"))
+        self.analyze_btn.setText(self.tr("Analyze"))
         self.rename_btn.setText(self.tr("Rename"))
         self.delete_btn.setText(self.tr("Delete"))
 

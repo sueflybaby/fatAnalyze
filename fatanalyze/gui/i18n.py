@@ -44,6 +44,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
 
         # --- Toolbar ---
         "ROI Tools": "ROI 工具",
+        "Modality:": "模态:",
         "Preset:": "预设:",
         "W/L Preset:": "窗宽窗位:",
         "Open DICOM…": "打开 DICOM…",
@@ -59,6 +60,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # --- Side panel group titles ---
         "Display": "显示",
         "ROI": "ROI",
+
+        # --- ROI list header ---
+        "ROIs": "ROI 列表",
 
         # --- Slice / labels ---
         "Slice:": "切片:",
@@ -90,6 +94,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "Open a DICOM folder to begin.": "打开 DICOM 文件夹开始。",
         "ROI cleared.": "已清空 ROI 勾画。",
         "Load failed": "加载失败",
+        "Loading…": "加载中…",
+        "Done.": "完成。",
         "DICOM QC": "DICOM 质控",
         "No image": "未加载图像",
         "Open a DICOM folder first.": "请先打开 DICOM 文件夹。",

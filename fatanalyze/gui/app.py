@@ -130,6 +130,15 @@ class FatAnalyzeWindow(QMainWindow):
 
         self.setStatusBar(QStatusBar(self))
         self.statusBar().showMessage(self.tr("Open a DICOM folder to begin."))
+        # Image-loading progress bar (hidden by default; shown during load).
+        from PySide6.QtWidgets import QProgressBar
+        self._load_progress = QProgressBar(self)
+        self._load_progress.setMaximumWidth(220)
+        self._load_progress.setRange(0, 0)  # indeterminate
+        self._load_progress.setTextVisible(True)
+        self._load_progress.setFormat(self.tr("Loading…"))
+        self._load_progress.hide()
+        self.statusBar().addPermanentWidget(self._load_progress)
         self.slice_view.pixel_hovered.connect(self._on_pixel_hovered)
 
     def _build_menu(self) -> None:
@@ -171,7 +180,6 @@ class FatAnalyzeWindow(QMainWindow):
     def _wire_signals(self) -> None:
         # --- Top toolbar (high-level actions) ---
         self.controls.open_folder_requested.connect(self._on_open_folder)
-        self.controls.analyze_requested.connect(self._on_analyze)
         self.controls.export_csv_requested.connect(self._on_export_csv)
         self.controls.language_changed.connect(self._on_language_changed)
         self.controls.modality_changed.connect(self._on_modality_changed)
@@ -183,6 +191,8 @@ class FatAnalyzeWindow(QMainWindow):
         self.panel.clear_roi_requested.connect(self._on_clear_polygon)
         self.panel.save_roi_requested.connect(self._on_save_polygon)
         self.panel.mr_preset_changed.connect(self._on_mr_preset_changed)
+        # --- ROI list (Analyze moved to its header) ---
+        self.roi_list.analyze_requested.connect(self._on_analyze)
         # --- View <-> state ---
         self.slice_slider.valueChanged.connect(self._on_slice_changed)
         self.slice_view.slice_changed.connect(self._on_view_slice_changed)
@@ -239,6 +249,9 @@ class FatAnalyzeWindow(QMainWindow):
         self._menu_actions["export"].setText(self.tr("Export CSV…"))
         self._menu_actions["quit"].setText(self.tr("Quit"))
         self._menu_actions["run_analyze"].setText(self.tr("Run Analyze"))
+        # Progress bar format
+        if self._load_progress.isVisible():
+            self._load_progress.setFormat(self.tr("Loading…"))
         self._menu_actions["about"].setText(self.tr("About fatAnalyze"))
         self._slice_label_label.setText(self.tr("Slice:"))
         self.statusBar().showMessage(self.tr("Open a DICOM folder to begin."))
@@ -255,6 +268,11 @@ class FatAnalyzeWindow(QMainWindow):
         )
         if not folder:
             return
+        # Show the indeterminate progress bar; restore cursor on any path.
+        self._load_progress.setFormat(self.tr("Loading…"))
+        self._load_progress.show()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
         try:
             if self._modality == Modality.MR:
                 preset_cfg = None
@@ -269,8 +287,13 @@ class FatAnalyzeWindow(QMainWindow):
             else:
                 image, qc = load_ct_series(Path(folder))
         except Exception as exc:
+            self._load_progress.hide()
+            QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, self.tr("Load failed"), str(exc))
             return
+        self._load_progress.setFormat(self.tr("Done."))
+        self._load_progress.hide()
+        QApplication.restoreOverrideCursor()
         self._image = image
         self._qc = qc
         self.slice_view.set_image(image)

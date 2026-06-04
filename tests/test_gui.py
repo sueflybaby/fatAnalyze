@@ -24,6 +24,7 @@ from PySide6.QtWidgets import QApplication
 # ---------------------------------------------------------------------------
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QPushButton
 
 
 # Ensure a QApplication exists for the whole module
@@ -455,3 +456,78 @@ def test_polygon_set_vertices_replaces_existing(qapp):
     poly.set_vertices(verts)
     assert poly.vertex_count() == 2
     assert not poly.is_closed
+
+
+# ---------------------------------------------------------------------------
+# Top toolbar / ROI list layout
+# ---------------------------------------------------------------------------
+
+
+def test_toolbar_minimal_layout(qapp):
+    """Top toolbar should expose Modality label, CT button, Open,
+    [spacer], Export, Language. Analyze moved to the ROI list header."""
+    from fatanalyze.gui import FatAnalyzeWindow
+    w = FatAnalyzeWindow()
+
+    # 1. Modality label present
+    assert w.controls._modality_label.text() == "Modality:"
+
+    # 2. Top toolbar buttons: CT (modality), Export, Lang — no Analyze
+    btns = w.controls.findChildren(QPushButton)
+    texts = [b.text() for b in btns]
+    assert "CT" in texts
+    assert "Export CSV" in texts
+    assert any(t in ("中文", "English") for t in texts)
+    assert "Analyze" not in texts, "Analyze should be removed from toolbar"
+
+    # 3. Open DICOM action is wired
+    open_actions = [a for a in w.controls.actions() if "Open DICOM" in a.text()]
+    assert len(open_actions) == 1
+
+
+def test_roi_list_has_analyze_button(qapp):
+    """Analyze button should live in the ROI list header."""
+    from fatanalyze.gui import FatAnalyzeWindow
+    w = FatAnalyzeWindow()
+
+    assert w.roi_list.analyze_btn.text() == "Analyze"
+    # The signal is wired to FatAnalyzeWindow._on_analyze
+    received: list = []
+    w._on_analyze = lambda: received.append("analyze")
+    w.roi_list.analyze_btn.click()
+    assert received == ["analyze"]
+
+
+def test_loading_progress_bar_hidden_initially(qapp):
+    """Loading progress bar is hidden on startup; appears during a load."""
+    from fatanalyze.gui import FatAnalyzeWindow
+    w = FatAnalyzeWindow()
+    assert w._load_progress.isHidden()
+
+    # Manually drive the show/hide the way _on_open_folder does.
+    # We can't use isVisible() reliably without showing the parent, so
+    # we just check that the hidden state toggles correctly.
+    w._load_progress.setFormat("Loading…")
+    w._load_progress.show()
+    assert not w._load_progress.isHidden()
+    w._load_progress.hide()
+    assert w._load_progress.isHidden()
+
+
+def test_toolbar_right_aligned_actions(qapp):
+    """Export and Language should be on the right side of the toolbar."""
+    from PySide6.QtCore import Qt
+    from fatanalyze.gui import FatAnalyzeWindow
+    w = FatAnalyzeWindow()
+    w.show()
+    qapp.processEvents()
+
+    # Compare the X position of the leftmost toolbar button (Modality CT)
+    # with the rightmost (Language) — Language should be to the right.
+    btns = w.controls.findChildren(QPushButton)
+    positions = sorted(((b.mapTo(w, b.rect().topLeft()).x(), b.text()) for b in btns))
+    # Find the leftmost (smallest x) and rightmost (largest x)
+    x_min_name = positions[0][1]
+    x_max_name = positions[-1][1]
+    assert "CT" == x_min_name
+    assert x_max_name in ("中文", "English")
