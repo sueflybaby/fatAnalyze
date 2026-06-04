@@ -56,6 +56,10 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         " W ": " 窗宽 ",
         " L ": " 窗位 ",
 
+        # --- Side panel group titles ---
+        "Display": "显示",
+        "ROI": "ROI",
+
         # --- Slice / labels ---
         "Slice:": "切片:",
         "— / —": "— / —",
@@ -119,6 +123,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "MR Preset:": "MR 预设:",
         "Switched to {mode} mode. Open a folder to begin.": "已切换到 {mode} 模式，请打开文件夹开始。",
         "Loaded {n} slices from {folder}": "已从 {folder} 加载 {n} 层切片",
+        "MR preset set to '{p}'.": "MR 预设已设为「{p}」。",
+        "MR preset set to '{p}'. Reopen folder to apply.": "MR 预设已设为「{p}」。重新打开文件夹以应用。",
 
         # --- MR Fat Fraction ---
         "Fat Fraction Bins:": "脂肪分数区间:",

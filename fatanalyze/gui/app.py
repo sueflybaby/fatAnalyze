@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from fatanalyze.config import load_mr_presets
 from fatanalyze.modality import Modality
 from fatanalyze.gui.controls import ControlsBar
+from fatanalyze.gui.control_panel import ControlPanel
 from fatanalyze.gui.i18n import install_locale, current_locale, SUPPORTED_LOCALES, reset_for_test
 from fatanalyze.gui.metrics_runner import compute_for_rois, compute_for_rois_mr, rasterize
 from fatanalyze.gui.polygon_item import PolygonItem
@@ -81,11 +82,16 @@ class FatAnalyzeWindow(QMainWindow):
         self.setCentralWidget(central)
         hsplit = QSplitter(Qt.Horizontal)
 
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
+        # --- Left side: control panel (Display + ROI) ---
+        self.panel = ControlPanel(self)
+        hsplit.addWidget(self.panel)
+
+        # --- Center: slice view + slider ---
+        center = QWidget()
+        center_layout = QVBoxLayout(center)
+        center_layout.setContentsMargins(0, 0, 0, 0)
         self.slice_view = SliceView(self)
-        left_layout.addWidget(self.slice_view, 1)
+        center_layout.addWidget(self.slice_view, 1)
 
         slider_row = QHBoxLayout()
         self._slice_label_label = QLabel(self.tr("Slice:"))
@@ -96,10 +102,11 @@ class FatAnalyzeWindow(QMainWindow):
         slider_row.addWidget(self.slice_slider, 1)
         self.slice_label = QLabel("— / —")
         slider_row.addWidget(self.slice_label)
-        left_layout.addLayout(slider_row)
+        center_layout.addLayout(slider_row)
 
-        hsplit.addWidget(left)
+        hsplit.addWidget(center)
 
+        # --- Right: ROI list + results ---
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -110,9 +117,12 @@ class FatAnalyzeWindow(QMainWindow):
         right_layout.addWidget(self.results, 2)
 
         hsplit.addWidget(right)
-        hsplit.setStretchFactor(0, 2)
-        hsplit.setStretchFactor(1, 1)
-        hsplit.setSizes([800, 400])
+        hsplit.setStretchFactor(0, 0)   # left panel: fixed-ish
+        hsplit.setStretchFactor(1, 2)   # slice view: dominant
+        hsplit.setStretchFactor(2, 1)   # right: secondary
+        hsplit.setSizes([230, 720, 400])
+        hsplit.setCollapsible(0, False)
+        hsplit.setCollapsible(2, False)
 
         main_layout = QHBoxLayout(central)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -159,17 +169,21 @@ class FatAnalyzeWindow(QMainWindow):
         self._menu_actions["about"] = act
 
     def _wire_signals(self) -> None:
+        # --- Top toolbar (high-level actions) ---
         self.controls.open_folder_requested.connect(self._on_open_folder)
-        self.controls.preset_changed.connect(self._on_preset_changed)
-        self.controls.window_level_changed.connect(self.slice_view.set_window_level)
-        self.controls.wl_preset_changed.connect(self.slice_view.apply_wl_preset)
-        self.controls.draw_toggle_requested.connect(self._on_draw_toggled)
-        self.controls.clear_roi_requested.connect(self._on_clear_polygon)
-        self.controls.save_roi_requested.connect(self._on_save_polygon)
         self.controls.analyze_requested.connect(self._on_analyze)
         self.controls.export_csv_requested.connect(self._on_export_csv)
         self.controls.language_changed.connect(self._on_language_changed)
         self.controls.modality_changed.connect(self._on_modality_changed)
+        # --- Side panel (Display + ROI) ---
+        self.panel.preset_changed.connect(self._on_preset_changed)
+        self.panel.window_level_changed.connect(self.slice_view.set_window_level)
+        self.panel.wl_preset_changed.connect(self.slice_view.apply_wl_preset)
+        self.panel.draw_toggle_requested.connect(self._on_draw_toggled)
+        self.panel.clear_roi_requested.connect(self._on_clear_polygon)
+        self.panel.save_roi_requested.connect(self._on_save_polygon)
+        self.panel.mr_preset_changed.connect(self._on_mr_preset_changed)
+        # --- View <-> state ---
         self.slice_slider.valueChanged.connect(self._on_slice_changed)
         self.slice_view.slice_changed.connect(self._on_view_slice_changed)
         self.roi_list.roi_selected.connect(self._on_roi_selected)
@@ -179,6 +193,9 @@ class FatAnalyzeWindow(QMainWindow):
 
     def _on_modality_changed(self, mod: str) -> None:
         self._modality = Modality(mod)
+        # Tell the side panel to swap W/L sliders and show/hide the
+        # appropriate preset combo (CT W/L Preset vs MR vendor Preset).
+        self.panel.set_modality(mod)
         # Clear image when switching modality
         self._image = None
         self._qc = None
@@ -200,6 +217,19 @@ class FatAnalyzeWindow(QMainWindow):
         install_locale(QApplication.instance(), locale)
         self.retranslate()
 
+    def _on_mr_preset_changed(self, preset_name: str) -> None:
+        """The MR vendor preset affects the next MR folder load."""
+        if self._modality == Modality.MR and self._image is not None:
+            self.statusBar().showMessage(
+                self.tr("MR preset set to '{p}'. Reopen folder to apply.").format(
+                    p=preset_name
+                ), 4000,
+            )
+        else:
+            self.statusBar().showMessage(
+                self.tr("MR preset set to '{p}'.").format(p=preset_name), 2000,
+            )
+
     def retranslate(self) -> None:
         self.setWindowTitle(self.tr("fatAnalyze"))
         self._file_menu.setTitle(self.tr("&File"))
@@ -213,6 +243,7 @@ class FatAnalyzeWindow(QMainWindow):
         self._slice_label_label.setText(self.tr("Slice:"))
         self.statusBar().showMessage(self.tr("Open a DICOM folder to begin."))
         self.controls.retranslate()
+        self.panel.retranslate()
         self.roi_list.retranslate()
         self.results.retranslate()
 
@@ -230,7 +261,7 @@ class FatAnalyzeWindow(QMainWindow):
                 try:
                     from fatanalyze.config import load_mr_presets
                     mr_presets = load_mr_presets()
-                    mr_preset_name = self.controls.current_mr_preset()
+                    mr_preset_name = self.panel.current_mr_preset()
                     preset_cfg = mr_presets.get("presets", {}).get(mr_preset_name, {})
                 except Exception:
                     pass
@@ -247,18 +278,17 @@ class FatAnalyzeWindow(QMainWindow):
         self.slice_slider.setValue(image.GetDepth() // 2)
         self.slice_slider.setEnabled(True)
         self.slice_label.setText(f"{self.slice_slider.value()+1} / {image.GetDepth()}")
-        w, l = self.slice_view.get_window_level()
-        self.controls.set_wl_sliders(w, l)
+        if self._modality == Modality.MR:
+            self.slice_view.set_window_level(100.0, 50.0)
+            self.panel.set_wl_sliders(100, 50)
+        else:
+            w, l = self.slice_view.get_window_level()
+            self.panel.set_wl_sliders(w, l)
         self._active_polygon = None
         self._polygons_by_name.clear()
         self.roi_list.clear()
         self._results.clear()
         self.results.clear()
-        if self._modality == Modality.MR:
-            self.slice_view.set_window_level(100.0, 50.0)
-            self.controls.set_wl_sliders(100, 50)
-            self.controls._w_label.setText(self.tr("FF Range"))
-            self.controls._l_label.setText(self.tr("Center"))
         QMessageBox.information(
             self, self.tr("DICOM QC"),
             qc.summary() if hasattr(qc, "summary") else str(qc),
@@ -300,9 +330,9 @@ class FatAnalyzeWindow(QMainWindow):
         if self._image is None:
             QMessageBox.warning(self, self.tr("No image"),
                                 self.tr("Open a DICOM folder first."))
-            self.controls.draw_btn.setChecked(False)
+            self.panel.draw_btn.setChecked(False)
             return
-        preset = self.controls.current_preset()
+        preset = self.panel.current_preset()
         color = PRESET_COLORS.get(preset, QColor(180, 180, 180))
         self._active_polygon = PolygonItem(color=color)
         self.slice_view._scene.addItem(self._active_polygon)
@@ -327,7 +357,7 @@ class FatAnalyzeWindow(QMainWindow):
                                     self.tr("Draw at least 3 vertices first."))
             return
         self._active_polygon.close()
-        preset = self.controls.current_preset()
+        preset = self.panel.current_preset()
         default_name = f"{preset}"
         name, ok = QInputDialog.getText(self, self.tr("Save ROI"),
                                         self.tr("ROI name:"), text=default_name)
@@ -340,7 +370,7 @@ class FatAnalyzeWindow(QMainWindow):
         self.roi_list.add_roi(roi)
         self._polygons_by_name[name] = self._active_polygon
         self._active_polygon = None
-        self.controls.draw_btn.setChecked(False)
+        self.panel.draw_btn.setChecked(False)
         self.statusBar().showMessage(
             self.tr("ROI '{name}' added ({n} vertices).").format(
                 name=name, n=len(roi.vertices)

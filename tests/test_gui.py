@@ -404,7 +404,7 @@ def test_saved_roi_keeps_preset_color_in_scene(qapp):
     w.slice_view.set_image(img)
 
     # Simulate "Polygon: ON" with preset = iliopsoas_left
-    w.controls.preset_combo.setCurrentText("iliopsoas_left")
+    w.panel.preset_combo.setCurrentText("iliopsoas_left")
     w._on_draw_toggled(True)
     assert w._active_polygon is not None
     expected_color = PRESET_COLORS["iliopsoas_left"]

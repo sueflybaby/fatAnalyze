@@ -132,11 +132,11 @@ class TestWindowLocale:
             assert actual.replace("&", "").replace("…", "…") == expected_text.replace("…", "…")
 
     def test_controls_bar_retranslate(self, app: QApplication) -> None:
-        """Verify toolbar buttons change language after a switch."""
+        """Verify side panel preset label changes language after a switch."""
         win = FatAnalyzeWindow()
-        assert "Preset:" in win.controls._preset_label.text()
+        assert "Preset:" in win.panel.preset_label.text()
         self._switch(app, win, "zh_CN")
-        assert "预设:" in win.controls._preset_label.text()
+        assert "预设:" in win.panel.preset_label.text()
 
     def test_slice_label_translate(self, app: QApplication) -> None:
         win = FatAnalyzeWindow()
@@ -161,7 +161,7 @@ class TestWindowLocale:
         self._switch(app, win, "zh_CN")
         self._switch(app, win, "en")
         assert win._file_menu.title() == "&File"
-        assert "Preset:" in win.controls._preset_label.text()
+        assert "Preset:" in win.panel.preset_label.text()
 
     def test_status_bar_updates(self, app: QApplication) -> None:
         win = FatAnalyzeWindow()
@@ -185,8 +185,8 @@ class TestLanguageSignal:
         assert current_locale() == "zh_CN"
         assert win.controls._lang_btn.text() == "English"
         # Verify translation took effect
-        assert win.controls._preset_label.text() == " 预设: "
-        assert "预设:" in win.controls._preset_label.text()
+        assert win.panel.preset_label.text() == "预设:"
+        assert "预设:" in win.panel.preset_label.text()
 
     def test_button_toggles_back_to_english(self, app: QApplication) -> None:
         win = FatAnalyzeWindow()
@@ -199,4 +199,4 @@ class TestLanguageSignal:
         app.processEvents()
         assert current_locale() == "en"
         assert win.controls._lang_btn.text() == "中文"
-        assert "Preset:" in win.controls._preset_label.text()
+        assert "Preset:" in win.panel.preset_label.text()
