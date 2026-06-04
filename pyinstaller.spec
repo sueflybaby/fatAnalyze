@@ -58,6 +58,7 @@ QT_EXCLUDES = [
 # --- Data files --------------------------------------------------------
 DATAS = [
     ("fatanalyze/config/targets.yaml", "fatanalyze/config"),
+    ("fatanalyze/config/mr_presets.yaml", "fatanalyze/config"),
 ]
 
 a = Analysis(
@@ -69,6 +70,8 @@ a = Analysis(
         "PySide6.QtCore",
         "PySide6.QtGui",
         "PySide6.QtWidgets",
+        "fatanalyze.modality",
+        "fatanalyze.interactive.analyze_mr",
     ],
     hookspath=[],
     hooksconfig={},
