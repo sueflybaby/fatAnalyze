@@ -97,6 +97,16 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "Loading…": "加载中…",
         "Done.": "完成。",
         "DICOM QC": "DICOM 质控",
+
+        # --- QC report summary ---
+        "OK": "正常",
+        "WARN": "警告",
+        "FAIL": "失败",
+        "mm": "毫米",
+        "HU": "CT值",
+        "z-CV": "层间变异",
+        "warnings": "警告",
+        "errors": "错误",
         "No image": "未加载图像",
         "Open a DICOM folder first.": "请先打开 DICOM 文件夹。",
         "No ROIs": "无 ROI",

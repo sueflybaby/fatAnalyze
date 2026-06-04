@@ -321,13 +321,36 @@ class FatAnalyzeWindow(QMainWindow):
         self.results.clear()
         QMessageBox.information(
             self, self.tr("DICOM QC"),
-            qc.summary() if hasattr(qc, "summary") else str(qc),
+            self._format_qc_summary(qc) if hasattr(qc, "summary") else str(qc),
         )
         self.statusBar().showMessage(
             self.tr("Loaded {n} slices from {folder}").format(
                 n=image.GetDepth(), folder=folder
             ), 5000,
         )
+
+    def _format_qc_summary(self, qc) -> str:
+        level_map = {
+            "OK": self.tr("OK"),
+            "WARN": self.tr("WARN"),
+            "FAIL": self.tr("FAIL"),
+        }
+        level = level_map.get("OK", "OK") if not qc.warnings and not qc.errors else (
+            level_map.get("WARN", "WARN") if not qc.errors else level_map.get("FAIL", "FAIL")
+        )
+        sp = ", ".join(f"{s:.2f}" for s in qc.spacing_xyz)
+        sx, sy, sz = qc.size_xyz
+        parts = [
+            f"[{level}] {sx}×{sy}×{sz} @ {sp} {self.tr('mm')}",
+            f"{self.tr('HU')} [{qc.hu_min:.0f}, {qc.hu_max:.0f}]",
+            f"{self.tr('z-CV')}={qc.slice_spacing_cv*100:.1f}%",
+        ]
+        msg = " | ".join(parts)
+        if qc.warnings:
+            msg += f" | {self.tr('warnings')}: {len(qc.warnings)}"
+        if qc.errors:
+            msg += f" | {self.tr('errors')}: {len(qc.errors)}"
+        return msg
 
     def _on_preset_changed(self, preset: str) -> None:
         if self._active_polygon is not None and self._active_polygon.vertex_count() == 0:
