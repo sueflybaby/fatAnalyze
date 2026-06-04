@@ -1,4 +1,7 @@
 # MR vendor presets for PDFF scale factor and Dixon series matching.
+#
+# fat_kw / water_kw are matched as whole words against the DICOM
+# SeriesDescription (case-insensitive, split on space / - / _ / /).
 presets:
   Siemens (0-100):
     pdff_scale_factor: 1.0

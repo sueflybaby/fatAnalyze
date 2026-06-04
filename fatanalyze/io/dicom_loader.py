@@ -106,16 +106,17 @@ def _is_canonical_lps(image: sitk.Image) -> bool:
 
 
 def _slice_z_spacings(image: sitk.Image) -> List[float]:
-    """Recover per-slice z-spacing from the image's metadata slice-by-slice.
+    """Recover per-slice z-spacing from the image metadata.
 
-    SimpleITK's ``GetMetaData`` only exposes the first slice's dict on the
-    3D image; we therefore walk the 3D image's Z direction and read the
-    ``ImagePositionPatient`` from each slice via per-slice numpy inspection
-    is not possible. Instead, we trust the reported ``spacing[2]`` when
-    individual positions are not exposed, and fall back to a single value.
+    For volumes with more than one slice the reported ``spacing[2]`` is
+    the gap between consecutive slices (computed by
+    ``ImageSeriesReader``).  Single-slice volumes return an empty list.
     """
+    n = image.GetSize()[2]
+    if n <= 1:
+        return []
     spacing_z = float(image.GetSpacing()[2])
-    return [spacing_z] * max(1, image.GetSize()[2] - 1)
+    return [spacing_z] * (n - 1)
 
 
 def _qcreport(image: sitk.Image) -> QCReport:
@@ -181,19 +182,47 @@ def _load_and_normalize_slices(file_names: List[str]) -> sitk.Image:
     each slice individually, finds the most common ``(x_size, y_size)``
     among all slices, resamples outliers to that size, and joins them
     into a 3D volume with :func:`sitk.JoinSeries`.
+
+    The returned image carries DICOM metadata copied from the first slice.
     """
     from collections import Counter
 
-    slices: list[sitk.Image] = []
+    if not file_names:
+        raise ValueError("_load_and_normalize_slices: empty file_names list")
+
+    # Sort by InstanceNumber (0020,0013) to ensure correct z-ordering
     reader = sitk.ImageFileReader()
-    dim_counter: Counter = Counter()
+    indexed: List[Tuple[int, str]] = []
     for fn in file_names:
+        try:
+            reader.SetFileName(fn)
+            reader.ReadImageInformation()
+            inst = int(reader.GetMetaData("0020|0013"))
+        except (RuntimeError, ValueError, TypeError):
+            inst = len(indexed)
+        indexed.append((inst, fn))
+    indexed.sort(key=lambda x: x[0])
+    sorted_fnames = [fn for _, fn in indexed]
+
+    slices: list[sitk.Image] = []
+    dim_counter: Counter = Counter()
+    for fn in sorted_fnames:
         reader.SetFileName(fn)
         img = reader.Execute()
         dim_counter[img.GetSize()[:2]] += 1
         slices.append(img)
 
     target_xy = dim_counter.most_common(1)[0][0]
+
+    # Reconstruct a reference image from the first slice to carry metadata
+    # through the fallback path
+    ref_image = slices[0]
+    metadata_tags: Dict[str, str] = {}
+    if ref_image.HasMetaDataKey(TAG_MODALITY):
+        metadata_tags[TAG_MODALITY] = ref_image.GetMetaData(TAG_MODALITY)
+    if ref_image.HasMetaDataKey(TAG_SERIES_UID):
+        metadata_tags[TAG_SERIES_UID] = ref_image.GetMetaData(TAG_SERIES_UID)
+
     normalized: list[sitk.Image] = []
     for img in slices:
         if img.GetSize()[:2] != target_xy:
@@ -205,7 +234,14 @@ def _load_and_normalize_slices(file_names: List[str]) -> sitk.Image:
             resampler.SetInterpolator(sitk.sitkNearestNeighbor)
             img = resampler.Execute(img)
         normalized.append(img)
-    return sitk.JoinSeries(normalized)
+
+    result = sitk.JoinSeries(normalized)
+
+    # Re-attach critical DICOM metadata lost by JoinSeries
+    for tag, val in metadata_tags.items():
+        result.SetMetaData(tag, val)
+
+    return result
 
 
 def load_ct_series(dicom_dir: str | Path) -> Tuple[sitk.Image, QCReport]:
@@ -249,13 +285,35 @@ def load_ct_series(dicom_dir: str | Path) -> Tuple[sitk.Image, QCReport]:
     reader.MetaDataDictionaryArrayUpdateOn()
     reader.LoadPrivateTagsOn()
 
-    try:
-        image = reader.Execute()
-    except RuntimeError as exc:
-        if "IO region that does not fully contain" in str(exc):
+    # Proactively check for mixed-dimension slices before Execute().
+    # ImageSeriesReader fails with a fragile platform-dependent error when
+    # slices have different XY sizes; scanning metadata first avoids it.
+    image = None
+    if len(file_names) > 1:
+        probe = sitk.ImageFileReader()
+        first_size = None
+        sizes_uniform = True
+        for fn in file_names:
+            try:
+                probe.SetFileName(fn)
+                probe.ReadImageInformation()
+                sz = probe.GetSize()[:2]
+                if first_size is None:
+                    first_size = sz
+                elif sz != first_size:
+                    sizes_uniform = False
+                    break
+            except RuntimeError:
+                sizes_uniform = False
+                break
+        if not sizes_uniform:
             image = _load_and_normalize_slices(file_names)
-        else:
-            raise
+
+    if image is None:
+        try:
+            image = reader.Execute()
+        except RuntimeError:
+            image = _load_and_normalize_slices(file_names)
 
     # SimpleITK auto-applies RescaleSlope/Intercept -> HU
     qc = _qcreport(image)
@@ -298,36 +356,86 @@ def _series_description(reader: sitk.ImageFileReader, file_name: str) -> str:
 
 
 def _load_series_from_files(file_names: List[str]) -> sitk.Image:
-    """Load a list of DICOM files as a 3D volume (like ImageSeriesReader)."""
+    """Load a list of DICOM files as a 3D volume (like ImageSeriesReader).
+
+    If slices have mixed dimensions, falls back to
+    :func:`_load_and_normalize_slices` automatically.
+    """
+    if not file_names:
+        raise ValueError("_load_series_from_files: empty file_names list")
+
     reader = sitk.ImageSeriesReader()
     reader.SetFileNames(file_names)
     reader.MetaDataDictionaryArrayUpdateOn()
     reader.LoadPrivateTagsOn()
-    try:
-        return reader.Execute()
-    except RuntimeError as exc:
-        if "IO region that does not fully contain" in str(exc):
-            return _load_and_normalize_slices(file_names)
-        raise
+
+    # Proactive mixed-dimension check (avoids fragile error-string parsing)
+    image = None
+    if len(file_names) > 1:
+        probe = sitk.ImageFileReader()
+        first_size = None
+        sizes_uniform = True
+        for fn in file_names:
+            try:
+                probe.SetFileName(fn)
+                probe.ReadImageInformation()
+                sz = probe.GetSize()[:2]
+                if first_size is None:
+                    first_size = sz
+                elif sz != first_size:
+                    sizes_uniform = False
+                    break
+            except RuntimeError:
+                sizes_uniform = False
+                break
+        if not sizes_uniform:
+            image = _load_and_normalize_slices(file_names)
+
+    if image is None:
+        try:
+            image = reader.Execute()
+        except RuntimeError:
+            image = _load_and_normalize_slices(file_names)
+
+    return image
+
+
+def _kw_match(desc: str, kw_list: List[str]) -> bool:
+    """Whole-word match against SeriesDescription.
+
+    The description is split on whitespace, ``/``, ``-``, ``_``, and each
+    keyword is checked for exact whole-word equality (case-insensitive).
+    This prevents ``FAT`` from matching ``FATIGUE`` or ``NON-FAT``.
+    """
+    if not kw_list:
+        return False
+    words = set(desc.upper().replace("/", " ").replace("-", " ").replace("_", " ").split())
+    return any(kw.upper() in words for kw in kw_list if kw.strip())
 
 
 def _find_mr_series(
     dicom_dir: str | Path,
     kw_list: List[str],
     file_reader: sitk.ImageFileReader,
+    exclude_uids: set[str] | None = None,
 ) -> List[str]:
     """Find DICOM series whose SeriesDescription matches one of the keywords.
 
     Returns the file list of the first matching series, or an empty list.
+    ``exclude_uids`` can be used to skip already-matched series.
     """
+    if not kw_list:
+        return []
     p = Path(dicom_dir)
     series_reader = sitk.ImageSeriesReader()
     for uid in series_reader.GetGDCMSeriesIDs(str(p)):
+        if exclude_uids and uid in exclude_uids:
+            continue
         fnames = series_reader.GetGDCMSeriesFileNames(str(p), uid)
         if not fnames:
             continue
         desc = _series_description(file_reader, fnames[0])
-        if any(kw in desc for kw in kw_list):
+        if _kw_match(desc, kw_list):
             return fnames
     return []
 
@@ -350,33 +458,17 @@ def _list_all_series(
     return series
 
 
-def _load_pdff_series(
-    dicom_dir: str | Path,
+def _load_pdff_series_from_files(
+    file_names: List[str],
     scale_factor: float = 1.0,
 ) -> sitk.Image:
-    """Load a single MR PDFF parameter-map series.
-
-    The pixel values are scaled by *scale_factor* so they represent
-    0-100 % fat fraction.
-    """
-    p = Path(dicom_dir)
-    reader = sitk.ImageSeriesReader()
-    uids = reader.GetGDCMSeriesIDs(str(p))
-    if not uids:
-        raise RuntimeError(f"No DICOM series found in {p}")
-    if len(uids) > 1:
-        raise RuntimeError(
-            f"Multiple DICOM series in {p}; PDFF mode expects a single series."
-        )
-    fnames = reader.GetGDCMSeriesFileNames(str(p), uids[0])
-    image = _load_series_from_files(fnames)
-
+    """Load a PDFF series from a pre-scanned file list and apply scaling."""
+    image = _load_series_from_files(file_names)
     if abs(scale_factor - 1.0) > 1e-6:
         arr = sitk.GetArrayFromImage(image).astype(np.float32) * scale_factor
         out = sitk.GetImageFromArray(arr)
         out.CopyInformation(image)
         image = out
-
     return image
 
 
@@ -387,14 +479,18 @@ def _compute_fat_fraction(
     """Compute pixel-wise fat fraction: ``FF = fat / (fat + water) * 100``.
 
     Regions where ``fat + water == 0`` are set to 0 %.
+    Uses float32 throughout to halve peak memory versus float64.
     """
-    fat_arr = sitk.GetArrayFromImage(fat_img).astype(np.float64)
-    water_arr = sitk.GetArrayFromImage(water_img).astype(np.float64)
+    fat_arr = sitk.GetArrayFromImage(fat_img).astype(np.float32)
+    water_arr = sitk.GetArrayFromImage(water_img).astype(np.float32)
+    # Compute in float32; back-out float64 only for division zero-guard
     denom = fat_arr + water_arr
-    mask = denom > 0
+    mask = denom > 0.0
     ff_arr = np.zeros_like(denom)
-    ff_arr[mask] = np.clip(fat_arr[mask] / denom[mask] * 100.0, 0.0, 100.0)
-    out = sitk.GetImageFromArray(ff_arr.astype(np.float32))
+    np.divide(fat_arr, denom, out=ff_arr, where=mask)
+    ff_arr *= 100.0
+    np.clip(ff_arr, 0.0, 100.0, out=ff_arr)
+    out = sitk.GetImageFromArray(ff_arr)
     out.CopyInformation(fat_img)
     return out
 
@@ -440,52 +536,98 @@ def load_mr_series(
     water_kw: List[str] = dixon_cfg.get("water_kw", [])
 
     p = Path(dicom_dir)
+
+    # Single scan collects all series info for the whole function
     all_series = _list_all_series(p)
+
+    if not all_series:
+        raise RuntimeError(f"No DICOM series found in {p}")
 
     if len(all_series) == 1:
         # ── PDFF: single series ───────────────────────────────────
-        image = _load_pdff_series(p, scale_factor)
+        _, _, fnames = all_series[0]
+        image = _load_pdff_series_from_files(fnames, scale_factor)
         qc = _mr_qcreport(image, "PDFF")
         return image, qc
 
-    if len(all_series) >= 2:
-        # ── Dixon: two series matched by keyword ──────────────────
-        # Build a quick file reader for description matching
-        file_reader = sitk.ImageFileReader()
-        fat_files = _find_mr_series(p, fat_kw, file_reader)
-        water_files = _find_mr_series(p, water_kw, file_reader)
+    # ── Dixon: two (or more) series matched by keyword ────────────
+    if not fat_kw and not water_kw:
+        raise RuntimeError(
+            "MR preset has empty fat/water keywords. "
+            "Select a different vendor preset or configure keywords."
+        )
 
-        if not fat_files or not water_files:
-            # Fall back: let user manually choose
-            choices = "\n".join(
-                f"  {i+1}. {uid[:12]}… — {desc or '(no description)'}"
-                for i, (uid, desc, _) in enumerate(all_series)
-            )
-            raise RuntimeError(
-                f"Could not auto-match fat/water series in folder.\n"
-                f"Available series:\n{choices}\n\n"
-                f"Fat keywords: {fat_kw}\nWater keywords: {water_kw}"
-            )
+    # Build series-uid -> file-list mapping from the single scan
+    file_reader = sitk.ImageFileReader()
+    all_uids = {uid for uid, _, _ in all_series}
 
-        fat_img = _load_series_from_files(fat_files)
-        water_img = _load_series_from_files(water_files)
+    fat_files = _find_mr_series(p, fat_kw, file_reader)
+    if fat_files:
+        # Find the UID of the matched fat series to exclude it
+        _reader = sitk.ImageSeriesReader()
+        for uid in all_uids:
+            _f = _reader.GetGDCMSeriesFileNames(str(p), uid)
+            if _f == fat_files:
+                exclude_uids = {uid}
+                break
+        else:
+            exclude_uids = set()
+    else:
+        exclude_uids = set()
 
-        if fat_img.GetSize()[:2] != water_img.GetSize()[:2]:
-            raise RuntimeError(
-                f"Fat ({fat_img.GetSize()[:2]}) and water "
-                f"({water_img.GetSize()[:2]}) series have different XY sizes."
-            )
-        if fat_img.GetDepth() != water_img.GetDepth():
-            raise RuntimeError(
-                f"Fat ({fat_img.GetDepth()} slices) and water "
-                f"({water_img.GetDepth()} slices) have different depths."
-            )
+    water_files = _find_mr_series(p, water_kw, file_reader, exclude_uids)
 
-        image = _compute_fat_fraction(fat_img, water_img)
-        qc = _mr_qcreport(image, "Dixon")
-        return image, qc
+    if not fat_files or not water_files:
+        choices = "\n".join(
+            f"  {i+1}. {uid[:12]}… — {desc or '(no description)'}"
+            for i, (uid, desc, _) in enumerate(all_series)
+        )
+        raise RuntimeError(
+            f"Could not auto-match fat/water series in folder.\n"
+            f"Available series:\n{choices}\n\n"
+            f"Fat keywords: {fat_kw}\nWater keywords: {water_kw}"
+        )
 
-    raise RuntimeError(f"No DICOM series found in {p}")
+    fat_img = _load_series_from_files(fat_files)
+    water_img = _load_series_from_files(water_files)
+
+    # ── Structural validation ─────────────────────────────────────
+    fat_sz = fat_img.GetSize()
+    water_sz = water_img.GetSize()
+    errors: List[str] = []
+    if fat_sz[:2] != water_sz[:2]:
+        errors.append(
+            f"XY size mismatch: fat {fat_sz[:2]} vs water {water_sz[:2]}"
+        )
+    if fat_sz[2] != water_sz[2]:
+        errors.append(
+            f"Depth mismatch: fat {fat_sz[2]} slices vs water {water_sz[2]}"
+        )
+    fat_sp = fat_img.GetSpacing()
+    water_sp = water_img.GetSpacing()
+    if abs(fat_sp[0] - water_sp[0]) > 1e-3 or abs(fat_sp[1] - water_sp[1]) > 1e-3:
+        errors.append(
+            f"XY spacing mismatch: fat ({fat_sp[0]:.3f}, {fat_sp[1]:.3f}) "
+            f"vs water ({water_sp[0]:.3f}, {water_sp[1]:.3f})"
+        )
+    fat_orig = fat_img.GetOrigin()
+    water_orig = water_img.GetOrigin()
+    if any(abs(a - b) > 1.0 for a, b in zip(fat_orig, water_orig)):
+        errors.append(
+            f"Origin mismatch: fat {fat_orig} vs water {water_orig}"
+        )
+    fat_dir = fat_img.GetDirection()
+    water_dir = water_img.GetDirection()
+    if any(abs(a - b) > 1e-3 for a, b in zip(fat_dir, water_dir)):
+        errors.append("Direction matrix mismatch between fat and water series")
+    if errors:
+        raise RuntimeError(
+            "Dixon fat/water series mismatch:\n" + "\n".join(f"  - {e}" for e in errors)
+        )
+
+    image = _compute_fat_fraction(fat_img, water_img)
+    qc = _mr_qcreport(image, "Dixon")
+    return image, qc
 
 
 def _mr_qcreport(image: sitk.Image, series_type: str) -> QCReport:
