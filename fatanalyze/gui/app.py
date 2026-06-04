@@ -39,7 +39,7 @@ from fatanalyze.gui.results_panel import ResultsPanel
 from fatanalyze.gui.roi import ROI
 from fatanalyze.gui.roi_list import ROIListWidget
 from fatanalyze.gui.slice_view import SliceView
-from fatanalyze.io.dicom_loader import load_ct_series, load_mr_series
+from fatanalyze.io.dicom_loader import detect_dicom_modality, load_ct_series, load_mr_series
 from fatanalyze.interactive.user_roi import UserROI
 
 
@@ -268,6 +268,13 @@ class FatAnalyzeWindow(QMainWindow):
         )
         if not folder:
             return
+        # Auto-detect modality from the first DICOM file in the folder.
+        try:
+            detected = detect_dicom_modality(Path(folder))
+            if detected != self._modality.value.lower():
+                self.controls.set_modality(detected)
+        except Exception:
+            pass  # fall through to existing logic
         # Show the indeterminate progress bar; restore cursor on any path.
         self._load_progress.setFormat(self.tr("Loading…"))
         self._load_progress.show()

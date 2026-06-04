@@ -684,4 +684,41 @@ def _mr_qcreport(image: sitk.Image, series_type: str) -> QCReport:
     return rep
 
 
-__all__ = ["load_ct_series", "load_mr_series", "QCReport", "make_synthetic_ct"]
+# ---------------------------------------------------------------------------
+# Modality auto-detection
+# ---------------------------------------------------------------------------
+
+
+def detect_dicom_modality(folder: Path) -> str:
+    """Read the DICOM Modality tag from the first file in *folder*.
+
+    Returns ``"ct"`` or ``"mr"``.  Raises :exc:`ValueError` when the
+    folder contains no recognised DICOM series or when the modality
+    is neither ``"CT"`` nor ``"MR"`` (only CT and MR are supported).
+    """
+    series_ids = sitk.ImageSeriesReader.GetGDCMSeriesIDs(str(folder))
+    if not series_ids:
+        raise ValueError(f"No DICOM series found in {folder}")
+    fnames = sitk.ImageSeriesReader.GetGDCMSeriesFileNames(
+        str(folder), series_ids[0]
+    )
+    if not fnames:
+        raise ValueError(f"No DICOM files in series {series_ids[0]}")
+    reader = sitk.ImageFileReader()
+    reader.SetFileName(fnames[0])
+    reader.ReadImageInformation()
+    mod = reader.GetMetaData(TAG_MODALITY).strip().upper()
+    if mod == "CT":
+        return "ct"
+    if mod == "MR":
+        return "mr"
+    raise ValueError(f"Unsupported DICOM modality '{mod}' — only CT/MR supported.")
+
+
+__all__ = [
+    "load_ct_series",
+    "load_mr_series",
+    "QCReport",
+    "make_synthetic_ct",
+    "detect_dicom_modality",
+]

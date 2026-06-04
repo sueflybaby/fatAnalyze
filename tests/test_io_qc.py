@@ -76,3 +76,34 @@ def test_qcreport_to_dict_round_trip() -> None:
     assert d["n_slices"] == img.GetSize()[2]
     assert d["modality"] == ""
     assert isinstance(d["warnings"], list)
+
+
+# ---------------------------------------------------------------------------
+# Modality auto-detection
+# ---------------------------------------------------------------------------
+
+
+def test_detect_dicom_modality_from_fixture() -> None:
+    """Real DICOM folder returns 'ct'."""
+    from pathlib import Path
+    from fatanalyze.io.dicom_loader import detect_dicom_modality
+    result = detect_dicom_modality(Path("data/my_case"))
+    assert result == "ct"
+
+
+def test_detect_dicom_modality_empty_dir_raises() -> None:
+    """Empty directory raises ValueError."""
+    import tempfile
+    from pathlib import Path
+    from fatanalyze.io.dicom_loader import detect_dicom_modality
+    with tempfile.TemporaryDirectory() as tmp:
+        with pytest.raises(ValueError):
+            detect_dicom_modality(Path(tmp))
+
+
+def test_detect_dicom_modality_nonexistent_raises() -> None:
+    """Non-existent directory raises ValueError."""
+    from pathlib import Path
+    from fatanalyze.io.dicom_loader import detect_dicom_modality
+    with pytest.raises(ValueError):
+        detect_dicom_modality(Path("/no/such/dir"))
