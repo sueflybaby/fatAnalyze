@@ -16,13 +16,14 @@ from fatanalyze.gui.roi import ROI
 from fatanalyze.interactive.analyze import analyze_user_roi
 from fatanalyze.interactive.user_roi import UserROI
 from fatanalyze.interactive.polygon_utils import empty_mask_like, rasterize_polygon
+from fatanalyze.io.dicom_loader import OperationCancelled, ProgressCallback
 
 
 PSOAS_PRESETS = ("iliopsoas_left", "iliopsoas_right")
 
 
 def rasterize(roi: ROI, ref_image: sitk.Image) -> sitk.Image:
-    """Populate ``roi.mask`` from its polygon vertices and return it.
+    """Populate ``roi.mask`` (and ``roi.user_roi``) from vertices; return mask.
 
     Rasterization is a thin wrapper around
     :func:`fatanalyze.interactive.polygon_utils.rasterize_polygon`; the
@@ -30,38 +31,52 @@ def rasterize(roi: ROI, ref_image: sitk.Image) -> sitk.Image:
     """
     if len(roi.vertices) < 3:
         roi.mask = empty_mask_like(ref_image)
-        return roi.mask
-    mask = rasterize_polygon(ref_image, roi.z_index, roi.vertices)
-    roi.mask = mask
-    return mask
-
-
-def _user_roi_from(roi: ROI) -> UserROI:
-    """Convert the GUI :class:`ROI` into the existing :class:`UserROI` dataclass."""
-    if roi.mask is None:
-        raise ValueError(f"ROI '{roi.name}' has no mask; call rasterize() first")
-    return UserROI(
+    else:
+        roi.mask = rasterize_polygon(ref_image, roi.z_index, roi.vertices)
+    roi.user_roi = UserROI(
         name=roi.name,
         preset=roi.preset,
         mask=roi.mask,
         z_index=roi.z_index,
         n_points=len(roi.vertices),
     )
+    return roi.mask
 
 
 def compute_for_rois(
     image: sitk.Image,
     rois: List[ROI],
     config: Optional[dict] = None,
+    progress: Optional[ProgressCallback] = None,
 ) -> Dict[str, dict]:
     """Compute metrics for a list of ROIs.
 
-    Returns a dict keyed by ROI name. For psoas presets, if both L and R
-    are present at the same ``z_index``, the L+R combined result is stored
-    under a synthetic key ``"<name>_combined"`` and the per-side ROIs are
-    still analyzed (and tagged with ``psoas_metrics=None`` since IMAT
-    requires the combined mask).
+    Parameters
+    ----------
+    image : sitk.Image
+        3D volume the ROIs are drawn on.
+    rois : list[ROI]
+        ROIs to analyze.
+    config : dict, optional
+        Pipeline config; defaults to :func:`load_default_config`.
+    progress : callable, optional
+        ``progress(current, total, message)`` invoked per-ROI and once
+        for the psoas-combine step. The callback may raise
+        :class:`OperationCancelled` to abort.
+
+    Returns
+    -------
+    dict[str, dict]
+        Keyed by ROI name. For psoas presets, if both L and R are present
+        at the same ``z_index``, the L+R combined result is stored under
+        a synthetic key ``"<name>_combined"`` and the per-side ROIs are
+        still analyzed (and tagged with ``psoas_metrics=None`` since IMAT
+        requires the combined mask).
     """
+    def report(cur: int, total: int, msg: str) -> None:
+        if progress is not None:
+            progress(cur, total, msg)
+
     cfg = config if config is not None else load_default_config()
     results: Dict[str, dict] = {}
 
@@ -71,12 +86,24 @@ def compute_for_rois(
         if roi.preset in PSOAS_PRESETS:
             psoas_by_z.setdefault(roi.z_index, []).append(roi)
 
+    has_psoas_combine = any(
+        len([r for r in sides if r.preset in PSOAS_PRESETS]) >= 2
+        for sides in psoas_by_z.values()
+    )
+    # Total = N (per-ROI) + 1 (psoas combine, if any) + 1 (final "Done.").
+    total = len(rois) + (1 if has_psoas_combine else 0) + 1
+    step = 0
+
+    report(step, total, f"Starting analysis of {len(rois)} ROI(s)…")
+
     for roi in rois:
+        step += 1
+        report(step, total, f"Processing ROI {step}/{len(rois)}: {roi.name}")
         # Ensure mask is up to date
-        if roi.mask is None:
+        if roi.user_roi is None:
             rasterize(roi, image)
         # For psoas, we'll fill in psoas_metrics on the combined entry
-        uroi = _user_roi_from(roi)
+        uroi = roi.user_roi
         result = analyze_user_roi(image, uroi, cfg)
         # Psoas sides: clear psoas_metrics (computed on the combined entry)
         if roi.preset in PSOAS_PRESETS:
@@ -93,6 +120,8 @@ def compute_for_rois(
         sides = [r for r in psoas_rois if r.preset in PSOAS_PRESETS]
         if len(sides) < 2:
             continue
+        step += 1
+        report(step, total, f"Combining psoas @ z={z}…")
         # Merge masks
         first_mask = sides[0].mask
         if first_mask is None:
@@ -121,12 +150,15 @@ def compute_for_rois(
         combined_result["name"] = f"Combined Psoas @ z={z}"
         results[combined_uroi.name] = combined_result
 
+    step += 1
+    report(step, total, "Done.")
     return results
 
 
 def compute_for_rois_mr(
     image: sitk.Image,
     rois: List[ROI],
+    progress: Optional[ProgressCallback] = None,
 ) -> Dict[str, dict]:
     """Compute MR fat-fraction metrics for a list of ROIs.
 
@@ -135,16 +167,28 @@ def compute_for_rois_mr(
     """
     from fatanalyze.interactive.analyze_mr import analyze_mr_roi
 
+    def report(cur: int, total: int, msg: str) -> None:
+        if progress is not None:
+            progress(cur, total, msg)
+
     results: Dict[str, dict] = {}
+    total = len(rois) + 1
+    step = 0
+    report(step, total, f"Starting analysis of {len(rois)} ROI(s)…")
+
     for roi in rois:
-        if roi.mask is None:
+        step += 1
+        report(step, total, f"Processing ROI {step}/{len(rois)}: {roi.name}")
+        if roi.user_roi is None:
             rasterize(roi, image)
-        uroi = _user_roi_from(roi)
+        uroi = roi.user_roi
         result = analyze_mr_roi(image, uroi)
         results[roi.name] = result
         roi.result = result
         roi.status = "analyzed"
+    report(total, total, "Done.")
     return results
 
 
-__all__ = ["compute_for_rois", "compute_for_rois_mr", "rasterize", "PSOAS_PRESETS"]
+__all__ = ["compute_for_rois", "compute_for_rois_mr", "rasterize", "PSOAS_PRESETS",
+           "OperationCancelled", "ProgressCallback"]

@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from fatanalyze.modality import Modality
+from fatanalyze.viz.histogram_plot import draw_histogram_bars
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -20,7 +21,6 @@ from PySide6.QtWidgets import (
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-from matplotlib.lines import Line2D
 
 
 class ResultsPanel(QWidget):
@@ -152,25 +152,13 @@ class ResultsPanel(QWidget):
             hist_data = hr.get("histogram", {}) if isinstance(hr, dict) else {}
             bin_centers = np.asarray(hist_data.get("bin_centers", []), dtype=float)
             counts = np.asarray(hist_data.get("counts", []), dtype=float)
-            if len(bin_centers) >= 2 and len(counts) == len(bin_centers):
-                width = float(bin_centers[1] - bin_centers[0])
-            else:
-                width = 1.0
-            self._ax.bar(bin_centers, counts, width=width,
-                         color="#888", edgecolor="black", linewidth=0.3)
-            mean_ff = result.get("mean_ff", float("nan"))
-            median_ff = result.get("median_ff", float("nan"))
-            if not np.isnan(mean_ff):
-                self._ax.axvline(mean_ff, color="blue", linestyle="-", linewidth=1.0,
-                                 label=f"mean={mean_ff:.1f}%")
-            if not np.isnan(median_ff):
-                self._ax.axvline(median_ff, color="green", linestyle="-", linewidth=1.0,
-                                 label=f"median={median_ff:.1f}%")
-            title = f"Fat Fraction — {result.get('name', '?')} ({n_voxels} voxels)"
-            self._ax.set_title(title)
-            self._ax.set_xlabel("Fat Fraction (%)")
-            self._ax.set_ylabel("Voxel count")
-            self._ax.legend(loc="upper right", fontsize=8)
+            draw_histogram_bars(
+                self._ax, bin_centers, counts,
+                xlabel="Fat Fraction (%)",
+                title=f"Fat Fraction — {result.get('name', '?')} ({n_voxels} voxels)",
+                mean=result.get("mean_ff", float("nan")),
+                median=result.get("median_ff", float("nan")),
+            )
         else:
             from fatanalyze.analysis.histogram import HistogramResult
             if isinstance(hr, HistogramResult):
@@ -182,28 +170,14 @@ class ResultsPanel(QWidget):
                     return
                 bin_centers = np.asarray(hr.histogram.get("bin_centers", []), dtype=float)
                 counts = np.asarray(hr.histogram.get("counts", []), dtype=float)
-                if len(bin_centers) >= 2 and len(counts) == len(bin_centers):
-                    width = float(bin_centers[1] - bin_centers[0])
-                else:
-                    width = 1.0
-                self._ax.bar(bin_centers, counts, width=width,
-                             color="#888", edgecolor="black", linewidth=0.3)
-                thresholds = result.get("ratios_thresholds") or {}
-                for label, hu in thresholds.items():
-                    self._ax.axvline(hu, color="red", linestyle="--", linewidth=0.8)
-                mean_hu = result.get("mean_hu", float("nan"))
-                median_hu = result.get("median_hu", float("nan"))
-                if not np.isnan(mean_hu):
-                    self._ax.axvline(mean_hu, color="blue", linestyle="-", linewidth=1.0,
-                                     label=f"mean={mean_hu:.1f}")
-                if not np.isnan(median_hu):
-                    self._ax.axvline(median_hu, color="green", linestyle="-", linewidth=1.0,
-                                     label=f"median={median_hu:.1f}")
-                title = f"Histogram — {result.get('name', '?')} ({hr.n_voxels} voxels)"
-                self._ax.set_title(title)
-                self._ax.set_xlabel("HU")
-                self._ax.set_ylabel("Voxel count")
-                self._ax.legend(loc="upper right", fontsize=8)
+                draw_histogram_bars(
+                    self._ax, bin_centers, counts,
+                    xlabel="HU",
+                    title=f"Histogram — {result.get('name', '?')} ({hr.n_voxels} voxels)",
+                    mean=result.get("mean_hu", float("nan")),
+                    median=result.get("median_hu", float("nan")),
+                    threshold_lines=result.get("ratios_thresholds") or {},
+                )
         self._canvas.draw_idle()
 
     def _format_metrics(self, name: str, r: Dict[str, Any]) -> str:

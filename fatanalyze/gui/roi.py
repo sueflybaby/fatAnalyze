@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import SimpleITK as sitk
 
+from fatanalyze.interactive.user_roi import UserROI
+
 
 Vertex = Tuple[float, float]
 
@@ -51,6 +53,7 @@ class ROI:
     status: str = "drawn"
     mask: Optional[sitk.Image] = None
     result: Optional[Dict[str, Any]] = None
+    user_roi: Optional[UserROI] = None
 
     @property
     def is_closed(self) -> bool:

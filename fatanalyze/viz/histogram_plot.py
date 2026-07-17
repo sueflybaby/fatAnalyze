@@ -131,4 +131,50 @@ def plot_histogram(
     return fig
 
 
-__all__ = ["plot_histogram"]
+def draw_histogram_bars(
+    ax: Axes,
+    bin_centers: np.ndarray,
+    counts: np.ndarray,
+    *,
+    xlabel: str,
+    title: str,
+    mean: Optional[float] = None,
+    median: Optional[float] = None,
+    color: str = "#888",
+    threshold_lines: Optional[Dict[str, float]] = None,
+    threshold_color: str = "red",
+):
+    """Draw histogram bars plus mean/median and optional threshold lines.
+
+    Shared by the GUI results panel (CT and MR branches) so the two code
+    paths do not duplicate the same matplotlib calls. ``bin_centers`` and
+    ``counts`` are 1-D arrays of equal length; ``mean``/``median`` of ``None``
+    or ``NaN`` are skipped.
+    """
+    if len(bin_centers) >= 2 and len(counts) == len(bin_centers):
+        width = float(bin_centers[1] - bin_centers[0])
+    else:
+        width = 1.0
+    ax.bar(bin_centers, counts, width=width,
+           color=color, edgecolor="black", linewidth=0.3)
+
+    legend_handles = []
+    legend_labels = []
+    if threshold_lines:
+        for label, value in threshold_lines.items():
+            ax.axvline(value, color=threshold_color, linestyle="--", linewidth=0.8)
+    if mean is not None and not np.isnan(mean):
+        ax.axvline(mean, color="blue", linestyle="-", linewidth=1.0,
+                   label=f"mean={mean:.1f}")
+    if median is not None and not np.isnan(median):
+        ax.axvline(median, color="green", linestyle="-", linewidth=1.0,
+                   label=f"median={median:.1f}")
+    if mean is not None or median is not None:
+        ax.legend(loc="upper right", fontsize=8)
+
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Voxel count")
+
+
+__all__ = ["plot_histogram", "draw_histogram_bars"]
