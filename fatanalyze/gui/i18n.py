@@ -133,8 +133,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "Analysis cancelled.": "已取消分析。",
         "Operation failed": "操作失败",
         "Cancel": "取消",
-        "Done.": "完成。",
-        "Save ROI": "保存 ROI",
         "Draw at least 3 vertices first.": "请先画至少 3 个顶点。",
         "ROI name:": "ROI 名称:",
 

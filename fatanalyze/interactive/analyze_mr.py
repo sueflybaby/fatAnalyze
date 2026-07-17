@@ -10,7 +10,7 @@ represents 0-100 % fat fraction.  The pipeline is:
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import numpy as np
 import SimpleITK as sitk
@@ -93,7 +93,6 @@ def analyze_mr_roi(
         histogram_result``
     """
     ff = extract_hu(image, user_roi.mask)
-    spacing = image.GetSpacing()
 
     n = int(ff.size)
     result: Dict[str, Any] = {

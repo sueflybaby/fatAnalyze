@@ -51,7 +51,8 @@ def plot_user_roi(
         f"{user_roi.name}  (preset={user_roi.preset}, z={z}, "
         f"{user_roi.n_voxels} px, {user_roi.area_cm2:.1f} cm^2, n={n_pts})"
     )
-    ax_ct.set_xlabel("x"); ax_ct.set_ylabel("y")
+    ax_ct.set_xlabel("x")
+    ax_ct.set_ylabel("y")
     ax_ct.grid(False)
 
     if analysis is not None and analysis["n_voxels"] > 0:

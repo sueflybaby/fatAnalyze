@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import patches as mpatches
 from matplotlib.axes import Axes
-from matplotlib.figure import Figure
 
 from fatanalyze.config import load_default_config
 
@@ -158,8 +157,6 @@ def draw_histogram_bars(
     ax.bar(bin_centers, counts, width=width,
            color=color, edgecolor="black", linewidth=0.3)
 
-    legend_handles = []
-    legend_labels = []
     if threshold_lines:
         for label, value in threshold_lines.items():
             ax.axvline(value, color=threshold_color, linestyle="--", linewidth=0.8)

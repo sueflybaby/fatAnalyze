@@ -5,7 +5,6 @@ import logging
 from typing import Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
-import numpy as np
 import SimpleITK as sitk
 from matplotlib.widgets import Button, PolygonSelector
 

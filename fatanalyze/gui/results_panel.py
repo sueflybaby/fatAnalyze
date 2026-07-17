@@ -1,7 +1,6 @@
 """Results panel: text table for HU stats + embedded matplotlib histogram."""
 from __future__ import annotations
 
-import math
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -11,7 +10,6 @@ from fatanalyze.viz.histogram_plot import draw_histogram_bars
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QSplitter,

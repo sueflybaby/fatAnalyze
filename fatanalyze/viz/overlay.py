@@ -8,7 +8,6 @@ import numpy as np
 import SimpleITK as sitk
 from matplotlib import colors as mcolors
 from matplotlib.axes import Axes
-from matplotlib.figure import Figure
 
 
 # Default colormap + alpha for masks

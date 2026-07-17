@@ -5,8 +5,7 @@ import sys
 from typing import Generator
 
 import pytest
-from PySide6.QtCore import QEvent
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWidgets import QApplication
 
 from fatanalyze.gui.i18n import (
     LOCALE_LABELS,
@@ -18,9 +17,6 @@ from fatanalyze.gui.i18n import (
     reset_for_test,
 )
 from fatanalyze.gui.app import FatAnalyzeWindow
-from fatanalyze.gui.controls import ControlsBar
-from fatanalyze.gui.results_panel import ResultsPanel
-from fatanalyze.gui.roi_list import ROIListWidget
 
 
 # ---------------------------------------------------------------------------

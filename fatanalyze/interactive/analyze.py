@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-import numpy as np
 import SimpleITK as sitk
 
 from fatanalyze.analysis.fat_metrics import psoas_imat_fraction

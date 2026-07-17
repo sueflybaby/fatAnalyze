@@ -14,13 +14,12 @@ from __future__ import annotations
 
 from typing import List, Optional, Sequence, Tuple
 
-from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QObject, QPointF, QRectF, Signal
 from PySide6.QtGui import QBrush, QColor, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsPathItem,
-    QGraphicsSceneMouseEvent,
 )
 
 

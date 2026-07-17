@@ -13,7 +13,6 @@ from fatanalyze.interactive import (
     analyze_user_roi,
     empty_mask_like,
     load_user_roi,
-    rasterize_polygon,
 )
 from fatanalyze.interactive.polygon_utils import rasterize_polygon as _rasterize
 from fatanalyze.interactive.user_roi import _sidecar_path

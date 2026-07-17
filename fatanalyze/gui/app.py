@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import numpy as np
 import SimpleITK as sitk
 
 from PySide6.QtCore import Qt
@@ -20,22 +19,19 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressDialog,
-    QPushButton,
     QSlider,
     QSplitter,
     QStatusBar,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
 
-from fatanalyze.config import load_mr_presets
 from fatanalyze.modality import Modality
 from fatanalyze import __version__
 from fatanalyze.gui.controls import ControlsBar
 from fatanalyze.gui.control_panel import ControlPanel
-from fatanalyze.gui.i18n import install_locale, current_locale, SUPPORTED_LOCALES, reset_for_test
-from fatanalyze.gui.metrics_runner import compute_for_rois, compute_for_rois_mr, rasterize
+from fatanalyze.gui.i18n import install_locale
+from fatanalyze.gui.metrics_runner import compute_for_rois, compute_for_rois_mr
 from fatanalyze.gui.polygon_item import PolygonItem
 from fatanalyze.gui.results_panel import ResultsPanel
 from fatanalyze.gui.roi import ROI
@@ -48,7 +44,6 @@ from fatanalyze.io.dicom_loader import (
     load_ct_series,
     load_mr_series,
 )
-from fatanalyze.interactive.user_roi import UserROI
 
 
 PRESET_COLORS: Dict[str, QColor] = {

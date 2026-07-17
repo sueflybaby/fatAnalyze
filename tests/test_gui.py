@@ -23,7 +23,6 @@ from PySide6.QtWidgets import QApplication
 # pytest-qt is not a dependency; use QTest from PySide6 directly.
 # ---------------------------------------------------------------------------
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QPushButton
 
 
@@ -88,8 +87,6 @@ def test_slice_view_renders_synthetic(qapp):
     w._image = img
     w.slice_view.set_image(img)
     # Pixel readout sanity check: x=30, y=30 should be in the soft-tissue block
-    arr = sitk.GetArrayFromImage(img)
-    expected_hu = float(arr[20, 30, 30])
     # Use the same mapping the slice view does (W=400, L=40 by default)
     w, l = w.slice_view.get_window_level()
     assert w == 400.0
@@ -138,7 +135,6 @@ def test_polygon_add_vertex_and_rasterize(qapp):
 
 
 def test_psoas_combined_merges_two_rois(qapp):
-    from fatanalyze.gui.polygon_item import PolygonItem
     from fatanalyze.gui.roi import ROI
     from fatanalyze.gui.metrics_runner import rasterize, compute_for_rois
 
@@ -173,7 +169,6 @@ def test_psoas_combined_merges_two_rois(qapp):
 
 def test_compute_for_rois_reports_progress_per_roi(qapp):
     """``compute_for_rois`` fires one start tick + N ROI ticks + Done."""
-    from fatanalyze.gui.polygon_item import PolygonItem
     from fatanalyze.gui.roi import ROI
     from fatanalyze.gui.metrics_runner import compute_for_rois
 
@@ -346,7 +341,7 @@ def _make_mouse_event(pos, button, event_type=None):
     picks the right one. We try the modern (5-arg + local + global) ctor
     first, then fall back to the legacy (4-arg) form.
     """
-    from PySide6.QtCore import QEvent, QPoint
+    from PySide6.QtCore import QEvent
     from PySide6.QtGui import QMouseEvent
 
     et = event_type or QEvent.MouseButtonPress
@@ -607,7 +602,6 @@ def test_run_with_progress_returns_none_on_cancellation(qapp, monkeypatch):
     """User clicking Cancel → return value is None, no exception escapes."""
     from PySide6.QtWidgets import QProgressDialog
     from fatanalyze.gui import FatAnalyzeWindow
-    from fatanalyze.io.dicom_loader import OperationCancelled
 
     w = FatAnalyzeWindow()
     w.show()
@@ -705,7 +699,6 @@ def test_on_analyze_uses_progress_dialog(qapp, monkeypatch):
 
 def test_toolbar_right_aligned_actions(qapp):
     """Export and Language should be on the right side of the toolbar."""
-    from PySide6.QtCore import Qt
     from fatanalyze.gui import FatAnalyzeWindow
     w = FatAnalyzeWindow()
     w.show()

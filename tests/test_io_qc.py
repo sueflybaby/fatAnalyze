@@ -6,7 +6,7 @@ import pytest
 import SimpleITK as sitk
 
 from fatanalyze.io.dicom_loader import (
-    QCReport, _is_canonical_lps, _qcreport, make_synthetic_ct,
+    _is_canonical_lps, _qcreport, make_synthetic_ct,
 )
 
 
