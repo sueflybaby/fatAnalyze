@@ -10,25 +10,46 @@ on:
 
 jobs:
   build-windows:
+    name: Build Windows executable
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
       - name: Install dependencies
+        # Slim build: only the GUI extras (no TotalSegmentator/torch), which
+        # the PyInstaller spec excludes anyway. Non-editable install is more
+        # robust on Windows than `pip install -e`.
         run: |
-          pip install -e ".[gui]"
+          python -m pip install --upgrade pip
+          pip install ".[gui]"
           pip install pyinstaller
 
       - name: Build with PyInstaller
-        run: |
-          pyinstaller pyinstaller.spec
+        run: pyinstaller pyinstaller.spec --noconfirm
 
-      - uses: actions/upload-artifact@v4
+      - name: Smoke test (import graph)
+        # Verify the frozen entry point's import graph resolves before we
+        # hand the artifact off. Does not require the DICOM fixtures.
+        run: python -c "import fatanalyze.gui.app; print('gui import OK')"
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BodyFatAnalyzer-build-logs
+          path: build/pyinstaller/warn-*.txt
+          if-no-files-found: ignore
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
         with:
           name: BodyFatAnalyzer-Windows-x64
           path: dist/BodyFatAnalyzer/
