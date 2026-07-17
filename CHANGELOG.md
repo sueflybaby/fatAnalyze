@@ -3,6 +3,50 @@
 All notable changes to BodyFatAnalyzer are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-07-17
+
+### Added
+- **Application icon** — `gui/resources/app_icon.svg` is set as the window
+  icon (from source and from an installed wheel; added to package-data).
+- **Progress + cancellation** for long operations:
+  - `io/dicom_loader`: new `ProgressCallback` protocol and
+    `OperationCancelled` exception; `load_ct_series` / `load_mr_series`
+    emit progress at each stage (CT: 3, MR: 4) and abort on cancel.
+  - `gui/app.py`: modal `QProgressDialog` wrapper (`_run_with_progress`)
+    for DICOM load and ROI analysis, with a Cancel button.
+  - `gui/metrics_runner`: `compute_for_rois` / `compute_for_rois_mr` accept
+    a `progress` callback and report per-ROI + psoas-combine steps.
+- **i18n** strings for the progress dialog and cancellation messages (zh_CN).
+
+### Changed
+- **Removed the `fatanalyze` CLI** — analysis is now driven entirely by the
+  GUI; the `fatanalyze` console script and `fatanalyze/cli.py` are gone.
+  The Python API (`load_ct_series` → `segment` → `compute_ratios` …) and
+  the `fatanalyze-gui` script remain. README's CLI section dropped in favor
+  of a Python API example.
+- **ROI management UX**: the per-ROI *Clear* / *Save ROI* buttons are
+  replaced by a single **Clear All ROIs** action (with confirmation);
+  removing a list entry now also destroys its scene polygon.
+- **Cleaner exam reset**: opening a new folder or switching CT↔MR modality
+  now fully tears down polygons, draw state, and results
+  (`_reset_rois_state`).
+- **Polygon drawing robustness**: vertex handles are now transform-independent
+  and `PolygonItem.destroy()` detaches them from the scene; `SliceView`
+  converts the slice to `ARGB32` and fixes handle hit-testing pass-through.
+- **Converged duplication**: `gui.ROI` now composes an `interactive.UserROI`
+  (built and cached by `rasterize`), removing the manual bridge in
+  `metrics_runner`; histogram drawing shared via
+  `viz/histogram_plot.draw_histogram_bars` (used by both CT and MR branches
+  of `results_panel`).
+- **Version consistency**: `__version__` (was `0.2.0`), the About box (was
+  hardcoded `0.4.0`), and `pyproject.toml` now all agree on `0.3.0`.
+- **Rebrand**: project name `fatAnalyze` → `BodyFatAnalyzer` across package
+  metadata, docstrings, docs, build artifacts, and tests.
+
+### Notes
+- Test suite extended with progress/cancellation, Clear-All, modality-reset,
+  and ROI-convergence cases; full suite **92/92 green**.
+
 ## [0.3.0] - 2026-06-02
 
 ### Added
