@@ -16,7 +16,13 @@ from pathlib import Path
 BLOCK_CIPHER = None
 
 # --- Qt modules that can be safely excluded ---------------------------
+# Also exclude *other* Qt bindings (PyQt5/PyQt6) so a polluted environment
+# with more than one binding installed does not abort the build — PyInstaller
+# only allows a single Qt binding in a frozen app.
 QT_EXCLUDES = [
+    "PyQt5",
+    "PyQt6",
+    "PySide2",
     "PySide6.QtNetwork",
     "PySide6.QtQml",
     "PySide6.QtQuick",
@@ -55,10 +61,23 @@ QT_EXCLUDES = [
     "PySide6.QtHttpServer",
 ]
 
+
+# --- Slim build: exclude the segmentation stack (optional, heavy) ------
+# TotalSegmentator + torch pull in several GB and are not needed for the
+# draw-and-analyze GUI workflow. Users who want segmentation install them
+# separately. Excluding them keeps the bundle to a few hundred MB.
+HEAVY_EXCLUDES = [
+    "totalsegmentator",
+    "torch",
+    "torchvision",
+    "torchaudio",
+]
+
 # --- Data files --------------------------------------------------------
 DATAS = [
     ("fatanalyze/config/targets.yaml", "fatanalyze/config"),
     ("fatanalyze/config/mr_presets.yaml", "fatanalyze/config"),
+    ("fatanalyze/gui/resources/app_icon.svg", "fatanalyze/gui/resources"),
 ]
 
 a = Analysis(
@@ -76,7 +95,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=["hooks/runtime_matplotlib.py"],
-    excludes=QT_EXCLUDES,
+    excludes=QT_EXCLUDES + HEAVY_EXCLUDES,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=BLOCK_CIPHER,
