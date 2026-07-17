@@ -36,7 +36,7 @@ where = ["."]
 include = ["fatanalyze*"]
 
 [tool.setuptools.package-data]
-fatanalyze = ["config/*.yaml"]
+fatanalyze = ["config/*.yaml", "gui/resources/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
