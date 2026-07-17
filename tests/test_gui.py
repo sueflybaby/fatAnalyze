@@ -50,7 +50,7 @@ def test_package_imports():
 def test_window_constructs(qapp):
     from fatanalyze.gui import FatAnalyzeWindow
     w = FatAnalyzeWindow()
-    assert w.windowTitle() == "fatAnalyze"
+    assert w.windowTitle() == "BodyFatAnalyzer"
     assert w.size().width() >= 800
     assert w.size().height() >= 600
     # Core widgets exist
@@ -164,6 +164,80 @@ def test_psoas_combined_merges_two_rois(qapp):
     s = pm["imat_fraction"] + pm["low_density_fraction"] + pm["normal_muscle_fraction"]
     assert 0.99 <= s <= 1.01
     assert pm["normal_muscle_fraction"] > 0.95
+
+
+# ---------------------------------------------------------------------------
+# Progress / cancellation API (analyze path)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_for_rois_reports_progress_per_roi(qapp):
+    """``compute_for_rois`` fires one start tick + N ROI ticks + Done."""
+    from fatanalyze.gui.polygon_item import PolygonItem
+    from fatanalyze.gui.roi import ROI
+    from fatanalyze.gui.metrics_runner import compute_for_rois
+
+    img = _make_synthetic_image(shape=(40, 100, 100))
+    verts = [(30, 30), (35, 30), (35, 35), (30, 35)]
+    rois = [
+        ROI(name=f"R{i}", preset="liver", z_index=20, vertices=verts)
+        for i in range(3)
+    ]
+
+    calls: list[tuple[int, int, str]] = []
+    compute_for_rois(img, rois, progress=lambda c, t, m: calls.append((c, t, m)))
+
+    # 1 start + 3 ROIs + 1 Done = 5 ticks; total = 4
+    assert len(calls) == 5
+    assert all(t == 4 for _, t, _ in calls)
+    # Currents monotonically increase, starting at 0 and ending at total.
+    currents = [c for c, _, _ in calls]
+    assert currents[0] == 0
+    assert currents[-1] == 4
+    assert currents == sorted(currents)
+    # Per-ROI messages name the ROI
+    for i, roi_name in enumerate(("R0", "R1", "R2"), start=1):
+        assert roi_name in calls[i][2]
+    assert "Done" in calls[-1][2]
+
+
+def test_compute_for_rois_psoas_combine_adds_extra_step(qapp):
+    """A L+R psoas pair adds a 'combining' step between the last ROI and Done."""
+    from fatanalyze.gui.roi import ROI
+    from fatanalyze.gui.metrics_runner import compute_for_rois
+
+    img = _make_synthetic_image(shape=(40, 100, 100))
+    verts = [(22, 30), (27, 30), (27, 35), (22, 35)]
+    rois = [
+        ROI(name="L", preset="iliopsoas_left", z_index=20, vertices=verts),
+        ROI(name="R", preset="iliopsoas_right", z_index=20, vertices=verts),
+    ]
+    calls: list[tuple[int, int, str]] = []
+    compute_for_rois(img, rois, progress=lambda c, t, m: calls.append((c, t, m)))
+
+    # 1 start + 2 ROIs + 1 combine + 1 Done = 5 ticks; total = 4
+    assert len(calls) == 5
+    assert all(t == 4 for _, t, _ in calls)
+    # Combine step is the third progress call (index 3).
+    assert "psoas" in calls[3][2].lower() or "combin" in calls[3][2].lower()
+
+
+def test_compute_for_rois_progress_can_cancel(qapp):
+    """Raising OperationCancelled from progress aborts analyze."""
+    from fatanalyze.gui.roi import ROI
+    from fatanalyze.gui.metrics_runner import OperationCancelled, compute_for_rois
+
+    img = _make_synthetic_image(shape=(40, 100, 100))
+    verts = [(30, 30), (35, 30), (35, 35), (30, 35)]
+    rois = [ROI(name="R0", preset="liver", z_index=20, vertices=verts)]
+
+    def cancel_after_first(cur: int, total: int, msg: str) -> None:
+        if cur >= 1:
+            from fatanalyze.io.dicom_loader import OperationCancelled as OC
+            raise OC("user cancelled")
+
+    with pytest.raises(OperationCancelled):
+        compute_for_rois(img, rois, progress=cancel_after_first)
 
 
 # ---------------------------------------------------------------------------
@@ -498,20 +572,135 @@ def test_roi_list_has_analyze_button(qapp):
     assert received == ["analyze"]
 
 
-def test_loading_progress_bar_hidden_initially(qapp):
-    """Loading progress bar is hidden on startup; appears during a load."""
+def test_loading_progress_bar_removed(qapp):
+    """The old status-bar progress bar was replaced by QProgressDialog."""
     from fatanalyze.gui import FatAnalyzeWindow
     w = FatAnalyzeWindow()
-    assert w._load_progress.isHidden()
+    # New approach: no permanent widget in the status bar; progress is
+    # shown via modal QProgressDialog during long operations.
+    assert not hasattr(w, "_load_progress")
 
-    # Manually drive the show/hide the way _on_open_folder does.
-    # We can't use isVisible() reliably without showing the parent, so
-    # we just check that the hidden state toggles correctly.
-    w._load_progress.setFormat("Loading…")
-    w._load_progress.show()
-    assert not w._load_progress.isHidden()
-    w._load_progress.hide()
-    assert w._load_progress.isHidden()
+
+# ---------------------------------------------------------------------------
+# Progress dialog integration (QProgressDialog wrapping)
+# ---------------------------------------------------------------------------
+
+
+def test_run_with_progress_returns_fn_result(qapp):
+    """``_run_with_progress`` returns whatever ``fn`` returns."""
+    from fatanalyze.gui import FatAnalyzeWindow
+
+    w = FatAnalyzeWindow()
+    w.show()
+    qapp.processEvents()
+
+    result = w._run_with_progress(
+        title="Test",
+        label="Running…",
+        total=2,
+        fn=lambda progress: (progress(0, 2, "start"), progress(2, 2, "done"), 42)[-1],
+    )
+    assert result == 42
+
+
+def test_run_with_progress_returns_none_on_cancellation(qapp, monkeypatch):
+    """User clicking Cancel → return value is None, no exception escapes."""
+    from PySide6.QtWidgets import QProgressDialog
+    from fatanalyze.gui import FatAnalyzeWindow
+    from fatanalyze.io.dicom_loader import OperationCancelled
+
+    w = FatAnalyzeWindow()
+    w.show()
+    qapp.processEvents()
+
+    # Simulate Cancel being clicked by pre-marking the dialog as cancelled.
+    # We hook into the QProgressDialog construction so we can flip wasCanceled().
+    real_init = QProgressDialog.__init__
+
+    def hooked_init(self, *a, **kw):
+        real_init(self, *a, **kw)
+        # Force wasCanceled() True on the very first check.
+        self._test_force_cancel = True
+
+    def fake_was_canceled(self):
+        return getattr(self, "_test_force_cancel", False)
+
+    monkeypatch.setattr(QProgressDialog, "__init__", hooked_init)
+    monkeypatch.setattr(QProgressDialog, "wasCanceled", fake_was_canceled)
+
+    def fn_that_should_be_cancelled(progress):
+        progress(0, 3, "start")
+        progress(1, 3, "midway")  # this callback will raise OperationCancelled
+        return "should not reach"
+
+    result = w._run_with_progress(
+        title="Test", label="Running…", total=3, fn=fn_that_should_be_cancelled,
+    )
+    assert result is None  # cancellation handled, returns None
+
+
+def test_run_with_progress_catches_generic_exceptions(qapp, monkeypatch):
+    """Non-cancellation errors → shown in a dialog, function returns None."""
+    from fatanalyze.gui import FatAnalyzeWindow
+
+    w = FatAnalyzeWindow()
+    w.show()
+    qapp.processEvents()
+
+    # Suppress the actual QMessageBox.critical popup during the test.
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **kw: 0)
+
+    def fn_that_raises(progress):
+        progress(0, 1, "start")
+        raise RuntimeError("boom")
+
+    result = w._run_with_progress(
+        title="Test", label="Running…", total=1, fn=fn_that_raises,
+    )
+    assert result is None
+
+
+def test_on_analyze_uses_progress_dialog(qapp, monkeypatch):
+    """``_on_analyze`` wraps ``compute_for_rois`` in a progress dialog.
+
+    Drives the whole flow: 1 ROI drawn on a synthetic image, then
+    ``_on_analyze`` should call compute_for_rois (passing a progress
+    callback) and populate ``self._results``. We intercept the metrics
+    runner to record what progress callback it was given.
+    """
+    from fatanalyze.gui import FatAnalyzeWindow
+    from fatanalyze.gui import app as app_module
+
+    w = FatAnalyzeWindow()
+    w.show()
+    qapp.processEvents()
+    _draw_and_save_roi(w, preset_key="liver", name="L")
+
+    captured: dict = {}
+
+    def fake_compute(image, rois, config=None, progress=None):
+        captured["progress"] = progress
+        if progress is not None:
+            progress(1, 2, "tick one")
+            progress(2, 2, "tick two")
+        return {"L": {"name": "L", "n_voxels": 1, "mean_hu": 40.0,
+                      "median_hu": 40.0, "std_hu": 0.0, "p05_hu": 40.0,
+                      "p95_hu": 40.0, "area_cm2": 0.1, "volume_ml": 0.1,
+                      "target": "liver", "ratios": {}, "psoas_metrics": None,
+                      "ff_bins": None, "clinical_flags": []}}
+
+    # Patch the symbol the GUI module actually calls (app re-imports the
+    # function under its own namespace at import time).
+    monkeypatch.setattr(app_module, "compute_for_rois", fake_compute)
+    from PySide6.QtWidgets import QProgressDialog
+    monkeypatch.setattr(QProgressDialog, "show", lambda self: None)
+    monkeypatch.setattr(QProgressDialog, "setMinimumDuration", lambda self, x: None)
+
+    w._on_analyze()
+    assert captured["progress"] is not None, "progress callback should be wired"
+    assert "L" in w._results
+    assert w._results["L"]["mean_hu"] == 40.0
 
 
 def test_toolbar_right_aligned_actions(qapp):
@@ -531,3 +720,140 @@ def test_toolbar_right_aligned_actions(qapp):
     x_max_name = positions[-1][1]
     assert "CT" == x_min_name
     assert x_max_name in ("中文", "English")
+
+
+# ---------------------------------------------------------------------------
+# Regression: opening another exam must clear all ROIs from the scene.
+# Bug: switching modality (CT → MR via auto-detect) called _on_modality_changed
+# which dropped polygon *references* but never called PolygonItem.destroy() on
+# the items still attached to the QGraphicsScene. The new image rendered
+# underneath the stale polygons, so the user saw "ROIs that didn't disappear".
+# ---------------------------------------------------------------------------
+
+
+def _draw_and_save_roi(w, preset_key: str = "iliopsoas_left",
+                       name: str = "L-Psoas",
+                       vertices=((20, 20), (30, 20), (25, 30))) -> None:
+    """Drive the draw→save flow without showing the QInputDialog prompt."""
+    img = _make_synthetic_image(shape=(20, 64, 64))
+    w._image = img
+    w.slice_view.set_image(img)
+    w.panel.preset_combo.setCurrentText(preset_key)
+    w._on_draw_toggled(True)
+    assert w._active_polygon is not None
+    for x, y in vertices:
+        w._active_polygon.add_vertex(x, y)
+    # Bypass the QInputDialog and the dblclick signal path.
+    from fatanalyze.gui.roi import ROI
+    z = w.slice_view.z_index
+    roi = ROI(name=name, preset=preset_key, z_index=z,
+              vertices=w._active_polygon.get_vertices())
+    w._on_save_polygon = lambda: None
+    w._active_polygon.close()
+    w.roi_list.add_roi(roi)
+    w._polygons_by_name[roi.name] = w._active_polygon
+    w._polygon_z[roi.name] = z
+    w._active_polygon = None
+    w.panel.draw_btn.setChecked(False)
+
+
+def test_modality_change_clears_rois_from_scene(qapp):
+    """Switching CT→MR must destroy the saved polygons from the scene.
+
+    Reproduces the "ROIs don't disappear when I open another exam" bug:
+    when the auto-detected modality differs from the current one,
+    ``_on_modality_changed`` is invoked. The old implementation only
+    cleared the Python dicts; the actual ``PolygonItem`` objects stayed
+    attached to ``slice_view._scene`` and overlapped the new image.
+    """
+    from fatanalyze.gui import FatAnalyzeWindow
+
+    w = FatAnalyzeWindow()
+    _draw_and_save_roi(w, preset_key="iliopsoas_left", name="L-Psoas")
+
+    saved_polygon = w._polygons_by_name["L-Psoas"]
+    assert saved_polygon in w.slice_view._scene.items(), \
+        "sanity: the saved polygon should be in the scene after Save ROI"
+
+    # Simulate opening an MR folder: _on_modality_changed is invoked
+    # BEFORE the new image is loaded, then _on_open_folder continues
+    # and re-renders. This is exactly what triggered the bug.
+    w._on_modality_changed("mr")
+
+    assert saved_polygon not in w.slice_view._scene.items(), \
+        "saved polygon must be removed from the scene on modality change"
+    assert w._polygons_by_name == {}, "polygon dict must be cleared"
+    assert w._active_polygon is None, "active polygon ref must be cleared"
+    assert w.roi_list.get_rois() == [], "ROI list must be cleared"
+
+
+def test_modality_change_resets_draw_mode(qapp):
+    """Switching modality while the draw button is ON must reset draw state.
+
+    Otherwise the user is left with ``polygon_mode=True`` and a dangling
+    ``active_polygon`` reference, so the next click tries to push vertices
+    into a polygon that no longer exists.
+    """
+    from fatanalyze.gui import FatAnalyzeWindow
+
+    w = FatAnalyzeWindow()
+    img = _make_synthetic_image()
+    w._image = img
+    w.slice_view.set_image(img)
+    # Drive the real signal chain: clicking the button triggers toggled,
+    # which the panel forwards to FatAnalyzeWindow._on_draw_toggled.
+    w.panel.draw_btn.setChecked(True)
+    assert w.slice_view.polygon_mode is True
+    assert w.panel.draw_btn.isChecked()
+
+    w._on_modality_changed("mr")
+
+    assert w.slice_view.polygon_mode is False
+    assert w.slice_view.active_polygon is None
+    assert not w.panel.draw_btn.isChecked()
+
+
+def test_open_new_folder_clears_active_drawing(qapp):
+    """Opening a new CT while in mid-draw must destroy the active polygon."""
+    from fatanalyze.gui import FatAnalyzeWindow
+
+    w = FatAnalyzeWindow()
+    img = _make_synthetic_image()
+    w._image = img
+    w.slice_view.set_image(img)
+    w._on_draw_toggled(True)
+    w._active_polygon.add_vertex(10, 10)
+    w._active_polygon.add_vertex(20, 10)
+    active_ref = w._active_polygon
+    assert active_ref in w.slice_view._scene.items()
+
+    # Drive the cleanup that runs on a successful folder load.
+    w._reset_rois_state()
+
+    assert active_ref not in w.slice_view._scene.items()
+    assert w._active_polygon is None
+    assert w._polygons_by_name == {}
+    assert w.slice_view.polygon_mode is False
+    assert w.slice_view.active_polygon is None
+    assert not w.panel.draw_btn.isChecked()
+
+
+def test_open_new_folder_clears_saved_rois(qapp):
+    """Opening a new CT must destroy all saved ROIs from the scene."""
+    from fatanalyze.gui import FatAnalyzeWindow
+
+    w = FatAnalyzeWindow()
+    _draw_and_save_roi(w, preset_key="iliopsoas_left", name="L-Psoas")
+    _draw_and_save_roi(w, preset_key="iliopsoas_right", name="R-Psoas")
+
+    scene_polys = [it for it in w.slice_view._scene.items()
+                   if type(it).__name__ == "PolygonItem"]
+    assert len(scene_polys) == 2
+
+    w._reset_rois_state()
+
+    scene_polys = [it for it in w.slice_view._scene.items()
+                   if type(it).__name__ == "PolygonItem"]
+    assert scene_polys == []
+    assert w._polygons_by_name == {}
+    assert w.roi_list.get_rois() == []

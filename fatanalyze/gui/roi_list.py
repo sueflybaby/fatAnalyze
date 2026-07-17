@@ -34,6 +34,7 @@ class ROIListWidget(QWidget):
     """
 
     roi_selected = Signal(object)  # ROI
+    roi_removed = Signal(str)  # name
     rois_changed = Signal()
     analyze_requested = Signal()
 
@@ -46,19 +47,26 @@ class ROIListWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # --- Header: title + Analyze button ---
+        # --- Header: title + Analyze button (right-aligned) ---
         header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setContentsMargins(0, 6, 6, 0)
         header_row.setSpacing(6)
         self._title_label = QLabel(self.tr("ROIs"))
         font = self._title_label.font()
         font.setBold(True)
         self._title_label.setFont(font)
-        header_row.addWidget(self._title_label, 1)
+        header_row.addWidget(self._title_label)
+
+        header_row.addStretch(1)
 
         self.analyze_btn = QPushButton(self.tr("Analyze"))
         self.analyze_btn.setDefault(False)
         self.analyze_btn.setAutoDefault(False)
+        self.analyze_btn.setStyleSheet(
+            "QPushButton { background-color: #4472C4; color: white; "
+            "font-weight: bold; padding: 4px 12px; border-radius: 3px; }"
+            "QPushButton:hover { background-color: #3568b0; }"
+        )
         self.analyze_btn.clicked.connect(self.analyze_requested.emit)
         header_row.addWidget(self.analyze_btn)
 
@@ -105,6 +113,7 @@ class ROIListWidget(QWidget):
                 if it.data(Qt.UserRole) == name:
                     self.list_widget.takeItem(i)
                     break
+            self.roi_removed.emit(name)
             self.rois_changed.emit()
 
     def get_rois(self) -> List[ROI]:

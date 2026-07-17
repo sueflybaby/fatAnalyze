@@ -10,7 +10,7 @@ import numpy as np
 import SimpleITK as sitk
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QColor, QKeySequence
+from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QSlider,
     QSplitter,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from fatanalyze.config import load_mr_presets
 from fatanalyze.modality import Modality
+from fatanalyze import __version__
 from fatanalyze.gui.controls import ControlsBar
 from fatanalyze.gui.control_panel import ControlPanel
 from fatanalyze.gui.i18n import install_locale, current_locale, SUPPORTED_LOCALES, reset_for_test
@@ -39,7 +41,13 @@ from fatanalyze.gui.results_panel import ResultsPanel
 from fatanalyze.gui.roi import ROI
 from fatanalyze.gui.roi_list import ROIListWidget
 from fatanalyze.gui.slice_view import SliceView
-from fatanalyze.io.dicom_loader import detect_dicom_modality, load_ct_series, load_mr_series
+from fatanalyze.io.dicom_loader import (
+    OperationCancelled,
+    ProgressCallback,
+    detect_dicom_modality,
+    load_ct_series,
+    load_mr_series,
+)
 from fatanalyze.interactive.user_roi import UserROI
 
 
@@ -56,7 +64,7 @@ PRESET_COLORS: Dict[str, QColor] = {
 class FatAnalyzeWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle(self.tr("fatAnalyze"))
+        self.setWindowTitle(self.tr("BodyFatAnalyzer"))
         self.resize(1280, 800)
 
         self._image: Optional[sitk.Image] = None
@@ -64,6 +72,8 @@ class FatAnalyzeWindow(QMainWindow):
         self._modality: Modality = Modality.CT
         self._active_polygon: Optional[PolygonItem] = None
         self._polygons_by_name: Dict[str, PolygonItem] = {}
+        self._polygon_z: Dict[str, int] = {}       # name → z_index for saved ROIs
+        self._active_polygon_z: Optional[int] = None  # z_index of the polygon being drawn
         self._results: Dict[str, dict] = {}
         self._menu_actions: Dict[str, QAction] = {}
 
@@ -130,15 +140,6 @@ class FatAnalyzeWindow(QMainWindow):
 
         self.setStatusBar(QStatusBar(self))
         self.statusBar().showMessage(self.tr("Open a DICOM folder to begin."))
-        # Image-loading progress bar (hidden by default; shown during load).
-        from PySide6.QtWidgets import QProgressBar
-        self._load_progress = QProgressBar(self)
-        self._load_progress.setMaximumWidth(220)
-        self._load_progress.setRange(0, 0)  # indeterminate
-        self._load_progress.setTextVisible(True)
-        self._load_progress.setFormat(self.tr("Loading…"))
-        self._load_progress.hide()
-        self.statusBar().addPermanentWidget(self._load_progress)
         self.slice_view.pixel_hovered.connect(self._on_pixel_hovered)
 
     def _build_menu(self) -> None:
@@ -172,7 +173,7 @@ class FatAnalyzeWindow(QMainWindow):
         self._menu_actions["run_analyze"] = act
 
         self._help_menu = menubar.addMenu(self.tr("&Help"))
-        act = QAction(self.tr("About fatAnalyze"), self)
+        act = QAction(self.tr("About BodyFatAnalyzer"), self)
         act.triggered.connect(self._on_about)
         self._help_menu.addAction(act)
         self._menu_actions["about"] = act
@@ -188,8 +189,7 @@ class FatAnalyzeWindow(QMainWindow):
         self.panel.window_level_changed.connect(self.slice_view.set_window_level)
         self.panel.wl_preset_changed.connect(self.slice_view.apply_wl_preset)
         self.panel.draw_toggle_requested.connect(self._on_draw_toggled)
-        self.panel.clear_roi_requested.connect(self._on_clear_polygon)
-        self.panel.save_roi_requested.connect(self._on_save_polygon)
+        self.panel.clear_all_rois_requested.connect(self._on_clear_all_rois)
         self.panel.mr_preset_changed.connect(self._on_mr_preset_changed)
         # --- ROI list (Analyze moved to its header) ---
         self.roi_list.analyze_requested.connect(self._on_analyze)
@@ -197,6 +197,7 @@ class FatAnalyzeWindow(QMainWindow):
         self.slice_slider.valueChanged.connect(self._on_slice_changed)
         self.slice_view.slice_changed.connect(self._on_view_slice_changed)
         self.roi_list.roi_selected.connect(self._on_roi_selected)
+        self.roi_list.roi_removed.connect(self._on_roi_removed)
         self.slice_view.polygon_closed.connect(self._on_save_polygon)
 
     # -- Language switching --------------------------------------------
@@ -206,14 +207,12 @@ class FatAnalyzeWindow(QMainWindow):
         # Tell the side panel to swap W/L sliders and show/hide the
         # appropriate preset combo (CT W/L Preset vs MR vendor Preset).
         self.panel.set_modality(mod)
-        # Clear image when switching modality
+        # Clear image when switching modality. Must destroy polygons from
+        # the scene as well as drop the Python references — otherwise the
+        # old ROIs would stay rendered on top of the new image.
+        self._reset_rois_state()
         self._image = None
         self._qc = None
-        self._results.clear()
-        self.results.clear()
-        self.roi_list.clear()
-        self._polygons_by_name.clear()
-        self._active_polygon = None
         self.slice_slider.setRange(0, 0)
         self.slice_slider.setEnabled(False)
         self.slice_label.setText(self.tr("— / —"))
@@ -222,6 +221,57 @@ class FatAnalyzeWindow(QMainWindow):
                 mode="MR" if mod == "mr" else "CT"
             )
         )
+
+    def _run_with_progress(
+        self,
+        title: str,
+        label: str,
+        total: int,
+        fn,
+        *args,
+        **kwargs,
+    ):
+        """Run ``fn(*args, progress=cb, **kwargs)`` under a modal QProgressDialog.
+
+        ``fn`` is expected to accept a ``progress`` keyword argument
+        matching :data:`ProgressCallback` and to call it at safe
+        checkpoints. If the user clicks Cancel, :class:`OperationCancelled`
+        is raised by the callback and surfaces here.
+
+        Returns ``fn``'s return value, or ``None`` if the user cancelled.
+        Non-cancellation exceptions (e.g. load failures) are caught, shown
+        in a :class:`QMessageBox`, and converted to ``None``.
+        """
+        dlg = QProgressDialog(label, self.tr("Cancel"), 0, total, self)
+        dlg.setWindowTitle(title)
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(0)  # show immediately
+        dlg.setAutoClose(False)     # we close it ourselves on cancel/error
+        dlg.setAutoReset(False)
+
+        def progress_cb(current: int, total_steps: int, message: str = "") -> None:
+            if total_steps > 0 and dlg.maximum() != total_steps:
+                dlg.setMaximum(total_steps)
+            dlg.setValue(current)
+            if message:
+                dlg.setLabelText(message)
+            QApplication.processEvents()
+            if dlg.wasCanceled():
+                raise OperationCancelled()
+
+        try:
+            try:
+                progress_cb(0, total, label)
+                return fn(*args, progress=progress_cb, **kwargs)
+            except OperationCancelled:
+                return None
+            except Exception as exc:
+                QMessageBox.critical(
+                    self, self.tr("Operation failed"), str(exc),
+                )
+                return None
+        finally:
+            dlg.close()
 
     def _on_language_changed(self, locale: str) -> None:
         install_locale(QApplication.instance(), locale)
@@ -241,7 +291,7 @@ class FatAnalyzeWindow(QMainWindow):
             )
 
     def retranslate(self) -> None:
-        self.setWindowTitle(self.tr("fatAnalyze"))
+        self.setWindowTitle(self.tr("BodyFatAnalyzer"))
         self._file_menu.setTitle(self.tr("&File"))
         self._analysis_menu.setTitle(self.tr("&Analysis"))
         self._help_menu.setTitle(self.tr("&Help"))
@@ -249,10 +299,7 @@ class FatAnalyzeWindow(QMainWindow):
         self._menu_actions["export"].setText(self.tr("Export CSV…"))
         self._menu_actions["quit"].setText(self.tr("Quit"))
         self._menu_actions["run_analyze"].setText(self.tr("Run Analyze"))
-        # Progress bar format
-        if self._load_progress.isVisible():
-            self._load_progress.setFormat(self.tr("Loading…"))
-        self._menu_actions["about"].setText(self.tr("About fatAnalyze"))
+        self._menu_actions["about"].setText(self.tr("About BodyFatAnalyzer"))
         self._slice_label_label.setText(self.tr("Slice:"))
         self.statusBar().showMessage(self.tr("Open a DICOM folder to begin."))
         self.controls.retranslate()
@@ -275,13 +322,12 @@ class FatAnalyzeWindow(QMainWindow):
                 self.controls.set_modality(detected)
         except Exception:
             pass  # fall through to existing logic
-        # Show the indeterminate progress bar; restore cursor on any path.
-        self._load_progress.setFormat(self.tr("Loading…"))
-        self._load_progress.show()
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        QApplication.processEvents()
-        try:
-            if self._modality == Modality.MR:
+
+        is_mr = self._modality == Modality.MR
+        total_stages = 4 if is_mr else 3
+
+        def do_load(progress: ProgressCallback):
+            if is_mr:
                 preset_cfg = None
                 try:
                     from fatanalyze.config import load_mr_presets
@@ -290,17 +336,25 @@ class FatAnalyzeWindow(QMainWindow):
                     preset_cfg = mr_presets.get("presets", {}).get(mr_preset_name, {})
                 except Exception:
                     pass
-                image, qc = load_mr_series(Path(folder), preset_cfg)
-            else:
-                image, qc = load_ct_series(Path(folder))
-        except Exception as exc:
-            self._load_progress.hide()
-            QApplication.restoreOverrideCursor()
-            QMessageBox.critical(self, self.tr("Load failed"), str(exc))
+                return load_mr_series(Path(folder), preset_cfg, progress=progress)
+            return load_ct_series(Path(folder), progress=progress)
+
+        try:
+            image, qc = self._run_with_progress(
+                title=self.tr("Loading DICOM"),
+                label=self.tr("Loading DICOM folder…"),
+                total=total_stages,
+                fn=do_load,
+            )
+        except OperationCancelled:
+            self.statusBar().showMessage(self.tr("Loading cancelled."), 3000)
             return
-        self._load_progress.setFormat(self.tr("Done."))
-        self._load_progress.hide()
-        QApplication.restoreOverrideCursor()
+        if image is None:
+            return  # _run_with_progress already showed the error dialog
+
+        # Wipe all ROI / draw state from the previous exam BEFORE the new
+        # image renders, so the scene is clean when the new slice appears.
+        self._reset_rois_state()
         self._image = image
         self._qc = qc
         self.slice_view.set_image(image)
@@ -314,11 +368,6 @@ class FatAnalyzeWindow(QMainWindow):
         else:
             w, l = self.slice_view.get_window_level()
             self.panel.set_wl_sliders(w, l)
-        self._active_polygon = None
-        self._polygons_by_name.clear()
-        self.roi_list.clear()
-        self._results.clear()
-        self.results.clear()
         QMessageBox.information(
             self, self.tr("DICOM QC"),
             self._format_qc_summary(qc) if hasattr(qc, "summary") else str(qc),
@@ -329,15 +378,42 @@ class FatAnalyzeWindow(QMainWindow):
             ), 5000,
         )
 
+    def _reset_rois_state(self) -> None:
+        """Destroy all polygons from the scene and clear every ROI-related slot.
+
+        Called when the user opens a new exam or switches modality, so the
+        next image starts from a clean slate (no leftover polygons, no
+        half-drawn active polygon, no stale results, no stuck draw mode).
+
+        Does not show a confirmation prompt — callers guard if needed.
+        """
+        if self._active_polygon is not None:
+            self._active_polygon.destroy()
+            self._active_polygon = None
+        for polygon in list(self._polygons_by_name.values()):
+            polygon.destroy()
+        self._active_polygon_z = None
+        self._polygons_by_name.clear()
+        self._polygon_z.clear()
+        self.roi_list.clear()
+        self._results.clear()
+        self.results.clear()
+        # If draw mode was left on, the user would click on a fresh image
+        # and create vertices in a polygon that's about to be replaced.
+        # Reset both the view's mode and the panel button state.
+        self.slice_view.polygon_mode = False
+        self.slice_view.active_polygon = None
+        if self.panel.draw_btn.isChecked():
+            self.panel.draw_btn.setChecked(False)
+        self._update_clear_button()
+
     def _format_qc_summary(self, qc) -> str:
-        level_map = {
-            "OK": self.tr("OK"),
-            "WARN": self.tr("WARN"),
-            "FAIL": self.tr("FAIL"),
-        }
-        level = level_map.get("OK", "OK") if not qc.warnings and not qc.errors else (
-            level_map.get("WARN", "WARN") if not qc.errors else level_map.get("FAIL", "FAIL")
-        )
+        if not qc.warnings and not qc.errors:
+            level = self.tr("OK")
+        elif not qc.errors:
+            level = self.tr("WARN")
+        else:
+            level = self.tr("FAIL")
         sp = ", ".join(f"{s:.2f}" for s in qc.spacing_xyz)
         sx, sy, sz = qc.size_xyz
         parts = [
@@ -356,10 +432,18 @@ class FatAnalyzeWindow(QMainWindow):
         if self._active_polygon is not None and self._active_polygon.vertex_count() == 0:
             self._active_polygon.set_color(PRESET_COLORS.get(preset, QColor(180, 180, 180)))
 
+    def _refresh_roi_visibility(self, z: int) -> None:
+        """Show only ROIs belonging to slice *z*, hide all others."""
+        for name, polygon in self._polygons_by_name.items():
+            polygon.setVisible(self._polygon_z.get(name) == z)
+        if self._active_polygon is not None:
+            self._active_polygon.setVisible(self._active_polygon_z == z)
+
     def _on_slice_changed(self, z: int) -> None:
         if self._image is None:
             return
         self.slice_view.set_slice(z)
+        self._refresh_roi_visibility(z)
         depth = self._image.GetDepth()
         self.slice_label.setText(f"{z+1} / {depth}")
 
@@ -368,17 +452,25 @@ class FatAnalyzeWindow(QMainWindow):
         self.slice_slider.blockSignals(True)
         self.slice_slider.setValue(z)
         self.slice_slider.blockSignals(False)
+        self._refresh_roi_visibility(z)
         depth = self._image.GetDepth()
         self.slice_label.setText(f"{z+1} / {depth}")
 
+    def _update_clear_button(self) -> None:
+        has_rois = len(self.roi_list.get_rois()) > 0
+        has_active = (self._active_polygon is not None
+                      and self._active_polygon.vertex_count() > 0)
+        self.panel.set_clear_all_enabled(has_rois or has_active)
+
     def _on_draw_toggled(self, on: bool) -> None:
         if not on:
+            self._active_polygon_z = None
             if self._active_polygon is not None and self._active_polygon.vertex_count() < 3:
-                self._active_polygon.clear()
-                self.slice_view._scene.removeItem(self._active_polygon)
+                self._active_polygon.destroy()
                 self._active_polygon = None
             self.slice_view.polygon_mode = False
             self.slice_view.active_polygon = None
+            self._update_clear_button()
             return
         if self._image is None:
             QMessageBox.warning(self, self.tr("No image"),
@@ -391,6 +483,9 @@ class FatAnalyzeWindow(QMainWindow):
         self.slice_view._scene.addItem(self._active_polygon)
         self.slice_view.active_polygon = self._active_polygon
         self.slice_view.polygon_mode = True
+        self._active_polygon_z = self.slice_view.z_index
+        self._active_polygon.signals.vertices_changed.connect(self._update_clear_button)
+        self._update_clear_button()
         self.statusBar().showMessage(
             self.tr("ROI drawing ON (preset: {preset}). "
                     "Left-click to add vertices, double-click to close.").format(
@@ -398,11 +493,29 @@ class FatAnalyzeWindow(QMainWindow):
             ),
         )
 
-    def _on_clear_polygon(self) -> None:
-        if self._active_polygon is None:
+    def _on_clear_all_rois(self) -> None:
+        has_rois = len(self.roi_list.get_rois()) > 0
+        has_active = (self._active_polygon is not None
+                      and self._active_polygon.vertex_count() > 0)
+        if not has_rois and not has_active:
             return
-        self._active_polygon.clear()
-        self.statusBar().showMessage(self.tr("ROI cleared."), 2000)
+        confirm = QMessageBox.question(
+            self, self.tr("Clear All ROIs"),
+            self.tr("Are you sure you want to clear all ROIs? This cannot be undone."),
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        if self._active_polygon is not None:
+            self._active_polygon.destroy()
+            self._active_polygon = None
+        for polygon in list(self._polygons_by_name.values()):
+            polygon.destroy()
+        self._active_polygon_z = None
+        self._polygons_by_name.clear()
+        self._polygon_z.clear()
+        self.roi_list.clear()
+        self._update_clear_button()
+        self.statusBar().showMessage(self.tr("All ROIs cleared."), 3000)
 
     def _on_save_polygon(self) -> None:
         if self._active_polygon is None or self._active_polygon.vertex_count() < 3:
@@ -421,14 +534,24 @@ class FatAnalyzeWindow(QMainWindow):
         roi = ROI(name=name, preset=preset, z_index=z,
                   vertices=self._active_polygon.get_vertices())
         self.roi_list.add_roi(roi)
+        name = roi.name
         self._polygons_by_name[name] = self._active_polygon
+        self._polygon_z[name] = z
         self._active_polygon = None
+        self._update_clear_button()
         self.panel.draw_btn.setChecked(False)
         self.statusBar().showMessage(
             self.tr("ROI '{name}' added ({n} vertices).").format(
                 name=name, n=len(roi.vertices)
             ), 4000,
         )
+
+    def _on_roi_removed(self, name: str) -> None:
+        self._polygon_z.pop(name, None)
+        polygon = self._polygons_by_name.pop(name, None)
+        if polygon is not None:
+            polygon.destroy()
+        self._update_clear_button()
 
     def _on_roi_selected(self, roi: ROI) -> None:
         if roi.name in self._results:
@@ -444,14 +567,33 @@ class FatAnalyzeWindow(QMainWindow):
             QMessageBox.information(self, self.tr("No ROIs"),
                                     self.tr("Draw at least one ROI first."))
             return
+
+        # Decide the total number of progress steps up front so the dialog
+        # can show a determinate progress bar with a real percentage.
+        has_psoas_combine = any(
+            r.preset in ("iliopsoas_left", "iliopsoas_right") for r in rois
+        )
+        total = len(rois) + (1 if has_psoas_combine else 0) + 1
+
+        is_mr = self._modality == Modality.MR
+
+        def do_analyze(progress: ProgressCallback):
+            if is_mr:
+                return compute_for_rois_mr(self._image, rois, progress=progress)
+            return compute_for_rois(self._image, rois, progress=progress)
+
         try:
-            if self._modality == Modality.MR:
-                self._results = compute_for_rois_mr(self._image, rois)
-            else:
-                self._results = compute_for_rois(self._image, rois)
-        except Exception as exc:
-            QMessageBox.critical(self, self.tr("Analyze failed"), str(exc))
+            self._results = self._run_with_progress(
+                title=self.tr("Analyzing ROIs"),
+                label=self.tr("Analyzing ROIs…"),
+                total=total,
+                fn=do_analyze,
+            )
+        except OperationCancelled:
+            self.statusBar().showMessage(self.tr("Analysis cancelled."), 3000)
             return
+        if self._results is None:
+            return  # cancelled or failed (dialog already shown)
         for name in self._results:
             self.roi_list.mark_analyzed(name)
         self.results.show_all(self._results, self._modality)
@@ -465,7 +607,7 @@ class FatAnalyzeWindow(QMainWindow):
                                     self.tr("Click 'Analyze' first."))
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, self.tr("Export metrics to CSV"), "fatAnalyze-metrics.csv",
+            self, self.tr("Export metrics to CSV"), "BodyFatAnalyzer-metrics.csv",
             "CSV files (*.csv)",
         )
         if not path:
@@ -525,8 +667,8 @@ class FatAnalyzeWindow(QMainWindow):
 
     def _on_about(self) -> None:
         QMessageBox.about(
-            self, self.tr("About fatAnalyze"),
-            "<b>fatAnalyze v0.4.0</b><br>"
+            self, self.tr("About BodyFatAnalyzer"),
+            f"<b>BodyFatAnalyzer v{__version__}</b><br>"
             + self.tr("CT ectopic-fat analysis (liver, pancreas, psoas at L3).") + "<br>"
             + self.tr("Native PySide6 GUI; the analysis pipeline is unchanged.") + "<br><br>"
             + self.tr("DICOM → polygon ROI → HU stats + clinical metrics.")
@@ -556,7 +698,11 @@ class FatAnalyzeWindow(QMainWindow):
 def main(argv: Optional[List[str]] = None) -> int:
     """Console-script entry point: ``fatanalyze-gui`` / ``python -m fatanalyze.gui``."""
     app = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
-    app.setApplicationName("fatAnalyze")
+    app.setApplicationName("BodyFatAnalyzer")
+    icon_path = Path(__file__).parent / "resources" / "app_icon.svg"
+    if icon_path.exists():
+        icon = QIcon(str(icon_path))
+        app.setWindowIcon(icon)
     install_locale(app, "zh_CN")
     win = FatAnalyzeWindow()
     win.show()

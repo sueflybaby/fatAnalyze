@@ -1,4 +1,4 @@
-"""Lightweight i18n for the fatAnalyze GUI.
+"""Lightweight i18n for the BodyFatAnalyzer GUI.
 
 Strings are wrapped with ``self.tr("...")`` (or ``QObject.tr`` for module
 constants). A custom :class:`QTranslator` subclass reads from a Python
@@ -40,7 +40,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "Export CSV…": "导出 CSV…",
         "Quit": "退出",
         "Run Analyze": "运行分析",
-        "About fatAnalyze": "关于 fatAnalyze",
+        "About BodyFatAnalyzer": "关于 BodyFatAnalyzer",
 
         # --- Toolbar ---
         "ROI Tools": "ROI 工具",
@@ -112,6 +112,28 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "No ROIs": "无 ROI",
         "Draw at least one ROI first.": "请先画至少一个 ROI。",
         "Analyze failed": "分析失败",
+
+        # --- Progress dialog (load + analyze) ---
+        "Loading DICOM": "加载 DICOM",
+        "Analyzing ROIs": "分析 ROI",
+        "Loading DICOM folder…": "正在加载 DICOM 文件夹…",
+        "Reading DICOM folder…": "正在读取 DICOM 文件夹…",
+        "Loading DICOM volume…": "正在加载 DICOM 体数据…",
+        "Computing QC report…": "正在生成质控报告…",
+        "Matching vendor preset…": "正在匹配厂商预设…",
+        "Loading PDFF volume…": "正在加载 PDFF 体数据…",
+        "Matching fat/water series…": "正在匹配脂肪/水序列…",
+        "Loading fat and water volumes…": "正在加载脂肪和水体数据…",
+        "Computing fat-fraction and QC…": "正在计算脂肪分数和质控…",
+        "Analyzing ROIs…": "正在分析 ROI…",
+        "Starting analysis of {n} ROI(s)…": "开始分析 {n} 个 ROI…",
+        "Processing ROI {i}/{n}: {name}": "正在处理 ROI {i}/{n}: {name}",
+        "Combining psoas @ z={z}…": "正在合并腰大肌 @ z={z}…",
+        "Loading cancelled.": "已取消加载。",
+        "Analysis cancelled.": "已取消分析。",
+        "Operation failed": "操作失败",
+        "Cancel": "取消",
+        "Done.": "完成。",
         "Save ROI": "保存 ROI",
         "Draw at least 3 vertices first.": "请先画至少 3 个顶点。",
         "ROI name:": "ROI 名称:",

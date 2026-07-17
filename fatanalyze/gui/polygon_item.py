@@ -43,14 +43,16 @@ class _VertexHandle(QGraphicsEllipseItem):
 
     def __init__(self, x: float, y: float, index: int,
                  polygon: PolygonItem) -> None:
-        super().__init__(x - HANDLE_RADIUS, y - HANDLE_RADIUS,
+        super().__init__(-HANDLE_RADIUS, -HANDLE_RADIUS,
                          2 * HANDLE_RADIUS, 2 * HANDLE_RADIUS)
+        self.setPos(x, y)
         self._index = index
         self._polygon = polygon
         self.setBrush(HANDLE_BRUSH)
         self.setPen(HANDLE_PEN)
         self.setFlag(QGraphicsItem.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.ItemSendsScenePositionChanges, True)
+        self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
         self.setZValue(11)
 
     def itemChange(self, change, value):
@@ -91,11 +93,7 @@ class PolygonItem(QGraphicsPathItem):
         self._vertices.append(pt)
         idx = len(self._vertices) - 1
         handle = _VertexHandle(x, y, idx, self)
-        scene = self.scene()
-        if scene is not None:
-            scene.addItem(handle)
-        else:
-            handle.setParentItem(self)
+        handle.setParentItem(self)
         self._handles.append(handle)
         self._rebuild_path()
         self.signals.vertex_added.emit(idx)
@@ -116,9 +114,26 @@ class PolygonItem(QGraphicsPathItem):
         self.signals.vertex_removed.emit(idx)
         return idx
 
+    def destroy(self) -> None:
+        """Remove this polygon (and all child handles) from the scene.
+
+        Use this before discarding the PolygonItem; ``clear()`` only
+        resets internal state but does not detach from the scene.
+        """
+        scene = self.scene()
+        for h in self._handles:
+            h.setParentItem(None)
+            if scene is not None and h.scene() is scene:
+                scene.removeItem(h)
+        self._handles.clear()
+        self._vertices.clear()
+        if scene is not None:
+            scene.removeItem(self)
+
     def clear(self) -> None:
         for h in self._handles:
             scene = h.scene()
+            h.setParentItem(None)
             if scene is not None:
                 scene.removeItem(h)
         self._handles.clear()

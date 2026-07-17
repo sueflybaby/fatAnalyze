@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import SimpleITK as sitk
@@ -28,6 +28,27 @@ TAG_MODALITY = "0008|0060"
 TAG_IMAGE_POSITION = "0020|0032"
 
 _Z_SPACING_CV_THRESHOLD = 0.05  # 5%
+
+
+# ---------------------------------------------------------------------------
+# Progress / cancellation API (shared with metrics_runner)
+# ---------------------------------------------------------------------------
+# A ProgressCallback is invoked at safe checkpoints during a long-running
+# operation. Signature: ``progress(current: int, total: int, message: str)``.
+# The ``current`` value is the step just completed; ``total`` is the total
+# number of steps. The callback may raise OperationCancelled to abort; the
+# worker checks for that at every checkpoint and propagates it cleanly.
+ProgressCallback = Callable[[int, int, str], None]
+
+
+class OperationCancelled(RuntimeError):
+    """Raised by :func:`load_ct_series` / :func:`load_mr_series` (and the
+    metrics-runner equivalents) when the user clicks Cancel in the
+    :class:`QProgressDialog`.
+
+    Callers should catch this and surface a friendly message; the operation
+    did not complete and any partial state should be discarded.
+    """
 
 
 @dataclass
@@ -244,8 +265,21 @@ def _load_and_normalize_slices(file_names: List[str]) -> sitk.Image:
     return result
 
 
-def load_ct_series(dicom_dir: str | Path) -> Tuple[sitk.Image, QCReport]:
+def load_ct_series(
+    dicom_dir: str | Path,
+    progress: Optional[ProgressCallback] = None,
+) -> Tuple[sitk.Image, QCReport]:
     """Load a DICOM series folder into a 3D SimpleITK.Image.
+
+    Parameters
+    ----------
+    dicom_dir : str or Path
+        Folder containing exactly one DICOM series.
+    progress : callable, optional
+        ``progress(current, total, message)`` invoked at each of 3
+        checkpoints: folder scan, volume assembly, QC report. The
+        callback may raise :class:`OperationCancelled` to abort; the
+        exception is propagated to the caller.
 
     Returns
     -------
@@ -261,12 +295,20 @@ def load_ct_series(dicom_dir: str | Path) -> Tuple[sitk.Image, QCReport]:
         If ``dicom_dir`` does not exist.
     RuntimeError
         If multiple distinct series are found in the folder.
+    OperationCancelled
+        If ``progress`` raised it (user clicked Cancel).
     """
     p = Path(dicom_dir)
     if not p.exists():
         raise FileNotFoundError(f"DICOM directory not found: {p}")
     if not p.is_dir():
         raise NotADirectoryError(f"Expected a directory: {p}")
+
+    def report(cur: int, total: int, msg: str) -> None:
+        if progress is not None:
+            progress(cur, total, msg)
+
+    report(0, 3, "Reading DICOM folder…")
 
     reader = sitk.ImageSeriesReader()
     series_uids = reader.GetGDCMSeriesIDs(str(p))
@@ -309,6 +351,7 @@ def load_ct_series(dicom_dir: str | Path) -> Tuple[sitk.Image, QCReport]:
         if not sizes_uniform:
             image = _load_and_normalize_slices(file_names)
 
+    report(1, 3, "Loading DICOM volume…")
     if image is None:
         try:
             image = reader.Execute()
@@ -316,7 +359,9 @@ def load_ct_series(dicom_dir: str | Path) -> Tuple[sitk.Image, QCReport]:
             image = _load_and_normalize_slices(file_names)
 
     # SimpleITK auto-applies RescaleSlope/Intercept -> HU
+    report(2, 3, "Computing QC report…")
     qc = _qcreport(image)
+    report(3, 3, "Done.")
     return image, qc
 
 
@@ -498,6 +543,7 @@ def _compute_fat_fraction(
 def load_mr_series(
     dicom_dir: str | Path,
     preset_cfg: Optional[Dict[str, Any]] = None,
+    progress: Optional[ProgressCallback] = None,
 ) -> Tuple[sitk.Image, QCReport]:
     """Load an MR fat-quantification series.
 
@@ -517,6 +563,11 @@ def load_mr_series(
         Vendor-preset dict with keys ``pdff_scale_factor`` and
         ``dixon`` (with sub-keys ``fat_kw`` / ``water_kw``).
         Defaults to ``"Siemens (0-100)"``.
+    progress : callable, optional
+        ``progress(current, total, message)`` invoked at each of 4
+        checkpoints: folder scan, series matching, volume assembly,
+        fat-fraction / QC. The callback may raise
+        :class:`OperationCancelled` to abort.
 
     Returns
     -------
@@ -525,6 +576,11 @@ def load_mr_series(
     qc : QCReport
         Quality-control summary (MR-aware).
     """
+    def report(cur: int, total: int, msg: str) -> None:
+        if progress is not None:
+            progress(cur, total, msg)
+
+    report(0, 4, "Reading DICOM folder…")
     if preset_cfg is None:
         from fatanalyze.config import load_mr_presets
         presets = load_mr_presets()
@@ -545,9 +601,13 @@ def load_mr_series(
 
     if len(all_series) == 1:
         # ── PDFF: single series ───────────────────────────────────
+        report(1, 4, "Matching vendor preset…")
         _, _, fnames = all_series[0]
+        report(2, 4, "Loading PDFF volume…")
         image = _load_pdff_series_from_files(fnames, scale_factor)
+        report(3, 4, "Computing QC report…")
         qc = _mr_qcreport(image, "PDFF")
+        report(4, 4, "Done.")
         return image, qc
 
     # ── Dixon: two (or more) series matched by keyword ────────────
@@ -558,6 +618,7 @@ def load_mr_series(
         )
 
     # Build series-uid -> file-list mapping from the single scan
+    report(1, 4, "Matching fat/water series…")
     file_reader = sitk.ImageFileReader()
     all_uids = {uid for uid, _, _ in all_series}
 
@@ -588,6 +649,7 @@ def load_mr_series(
             f"Fat keywords: {fat_kw}\nWater keywords: {water_kw}"
         )
 
+    report(2, 4, "Loading fat and water volumes…")
     fat_img = _load_series_from_files(fat_files)
     water_img = _load_series_from_files(water_files)
 
@@ -625,8 +687,10 @@ def load_mr_series(
             "Dixon fat/water series mismatch:\n" + "\n".join(f"  - {e}" for e in errors)
         )
 
+    report(3, 4, "Computing fat-fraction and QC…")
     image = _compute_fat_fraction(fat_img, water_img)
     qc = _mr_qcreport(image, "Dixon")
+    report(4, 4, "Done.")
     return image, qc
 
 
@@ -721,4 +785,6 @@ __all__ = [
     "QCReport",
     "make_synthetic_ct",
     "detect_dicom_modality",
+    "OperationCancelled",
+    "ProgressCallback",
 ]

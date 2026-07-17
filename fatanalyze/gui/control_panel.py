@@ -51,7 +51,7 @@ class ControlPanel(QWidget):
 
     Signals mirror the subset of :class:`ControlsBar` we still need:
     ``preset_changed``, ``window_level_changed``, ``wl_preset_changed``,
-    ``draw_toggle_requested``, ``clear_roi_requested``, ``save_roi_requested``,
+    ``draw_toggle_requested``, ``clear_roi_requested``,
     ``mr_preset_changed``.
     """
 
@@ -59,8 +59,7 @@ class ControlPanel(QWidget):
     window_level_changed = Signal(float, float)
     wl_preset_changed = Signal(str)
     draw_toggle_requested = Signal(bool)
-    clear_roi_requested = Signal()
-    save_roi_requested = Signal()
+    clear_all_rois_requested = Signal()
     mr_preset_changed = Signal(str)
 
     def __init__(self, parent=None) -> None:
@@ -77,8 +76,10 @@ class ControlPanel(QWidget):
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(8)
 
-        root.addWidget(self._build_display_group())
-        root.addWidget(self._build_roi_group())
+        self.display_group = self._build_display_group()
+        self.roi_group = self._build_roi_group()
+        root.addWidget(self.display_group)
+        root.addWidget(self.roi_group)
         root.addStretch(1)
 
     def _build_display_group(self) -> QGroupBox:
@@ -151,15 +152,10 @@ class ControlPanel(QWidget):
         self.draw_btn.toggled.connect(self._on_draw_toggled)
         v.addWidget(self.draw_btn)
 
-        row = QHBoxLayout()
-        row.setSpacing(6)
-        self._clear_btn = QPushButton(self.tr("Clear"))
-        self._clear_btn.clicked.connect(self.clear_roi_requested.emit)
-        row.addWidget(self._clear_btn)
-        self._save_btn = QPushButton(self.tr("Save ROI"))
-        self._save_btn.clicked.connect(self.save_roi_requested.emit)
-        row.addWidget(self._save_btn)
-        v.addLayout(row)
+        v.addSpacing(6)
+        self._clear_all_btn = QPushButton(self.tr("Clear All ROIs"))
+        self._clear_all_btn.clicked.connect(self.clear_all_rois_requested.emit)
+        v.addWidget(self._clear_all_btn)
 
         return box
 
@@ -264,6 +260,9 @@ class ControlPanel(QWidget):
                               else self.tr("ROI Draw: OFF"))
         self.draw_toggle_requested.emit(checked)
 
+    def set_clear_all_enabled(self, enabled: bool) -> None:
+        self._clear_all_btn.setEnabled(enabled)
+
     # -- public API ---------------------------------------------------
 
     def current_preset(self) -> str:
@@ -294,9 +293,8 @@ class ControlPanel(QWidget):
 
     def retranslate(self) -> None:
         # Display group title
-        self.findChildren(QGroupBox)[0].setTitle(self.tr("Display"))
-        if len(self.findChildren(QGroupBox)) > 1:
-            self.findChildren(QGroupBox)[1].setTitle(self.tr("ROI"))
+        self.display_group.setTitle(self.tr("Display"))
+        self.roi_group.setTitle(self.tr("ROI"))
 
         # Preset label
         self.preset_label.setText(self.tr("Preset:"))
@@ -332,8 +330,7 @@ class ControlPanel(QWidget):
         is_on = self.draw_btn.isChecked()
         self.draw_btn.setText(self.tr("ROI Draw: ON") if is_on
                               else self.tr("ROI Draw: OFF"))
-        self._clear_btn.setText(self.tr("Clear"))
-        self._save_btn.setText(self.tr("Save ROI"))
+        self._clear_all_btn.setText(self.tr("Clear All ROIs"))
 
 
 __all__ = ["ControlPanel", "PRESET_CHOICES"]

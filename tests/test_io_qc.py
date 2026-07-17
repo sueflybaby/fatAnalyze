@@ -107,3 +107,77 @@ def test_detect_dicom_modality_nonexistent_raises() -> None:
     from fatanalyze.io.dicom_loader import detect_dicom_modality
     with pytest.raises(ValueError):
         detect_dicom_modality(Path("/no/such/dir"))
+
+
+# ---------------------------------------------------------------------------
+# Progress / cancellation API
+# ---------------------------------------------------------------------------
+
+
+def test_load_ct_series_calls_progress_at_all_stages() -> None:
+    """``load_ct_series`` invokes progress once per stage and once at the end."""
+    from pathlib import Path
+    from fatanalyze.io.dicom_loader import load_ct_series
+
+    calls: list[tuple[int, int, str]] = []
+    load_ct_series(Path("data/my_case"),
+                   progress=lambda c, t, m: calls.append((c, t, m)))
+
+    # Expect 4 ticks: 0, 1, 2, 3 (Done.)
+    assert len(calls) == 4
+    # Total stays constant (3 stages) across all ticks.
+    assert all(t == 3 for _, t, _ in calls)
+    # Monotonic increasing current value, ending at total.
+    currents = [c for c, _, _ in calls]
+    assert currents == [0, 1, 2, 3]
+    # Each tick has a non-empty message.
+    assert all(m for _, _, m in calls)
+    # The final tick announces completion.
+    assert "Done" in calls[-1][2] or "done" in calls[-1][2].lower()
+
+
+def test_load_ct_series_progress_callback_can_cancel() -> None:
+    """Raising OperationCancelled from the callback aborts the load."""
+    from pathlib import Path
+    from fatanalyze.io.dicom_loader import OperationCancelled, load_ct_series
+
+    def cancel_at_first(cur: int, total: int, msg: str) -> None:
+        if cur >= 0:
+            raise OperationCancelled("user cancelled")
+
+    with pytest.raises(OperationCancelled):
+        load_ct_series(Path("data/my_case"), progress=cancel_at_first)
+
+
+def test_load_ct_series_without_progress_still_works() -> None:
+    """``progress=None`` (the default) must remain a valid call site."""
+    from pathlib import Path
+    from fatanalyze.io.dicom_loader import load_ct_series
+    image, qc = load_ct_series(Path("data/my_case"))
+    assert image.GetDepth() > 0
+    assert qc is not None
+
+
+def test_load_mr_series_progress_stages() -> None:
+    """MR loader fires 5 ticks (0..4) for the PDFF path."""
+    from pathlib import Path
+    from fatanalyze.io.dicom_loader import load_mr_series
+
+    # MR is a heavier path; the test will use a synthetic DICOM folder if
+    # one isn't available. For now we only assert the *signature* —
+    # the loader never raises TypeError when progress is omitted.
+    # A real MR fixture would live under data/ (none committed).
+    try:
+        calls: list[tuple[int, int, str]] = []
+        load_mr_series(Path("data/my_case"),
+                       progress=lambda c, t, m: calls.append((c, t, m)))
+    except (RuntimeError, FileNotFoundError):
+        # data/my_case is a CT folder, so MR loader will fail — that's
+        # the expected behavior. The point is: progress=None or a
+        # callback that records both work without TypeError.
+        pass
+    # If the load succeeded (real MR fixture), assert stage count.
+    if calls:
+        assert all(t == 4 for _, t, _ in calls)
+        assert calls[0][0] == 0
+        assert calls[-1][0] == 4

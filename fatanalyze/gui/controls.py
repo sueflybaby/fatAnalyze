@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
@@ -55,20 +56,26 @@ class ControlsBar(QToolBar):
         self._build()
 
     def _build(self) -> None:
-        # --- Left: Modality label + toggle button ---
+        # --- Left: Modality label + toggle button (grouped to stay close) ---
+        mod_group = QWidget()
+        mod_row = QHBoxLayout(mod_group)
+        mod_row.setContentsMargins(0, 0, 0, 0)
+        mod_row.setSpacing(4)
         self._modality_label = QLabel(self.tr("Modality:"))
-        self._modality_label.setMinimumWidth(60)
-        self.addWidget(self._modality_label)
+        mod_row.addWidget(self._modality_label)
 
         self.modality_btn = QPushButton("CT")
         self.modality_btn.setCheckable(True)
         self.modality_btn.setFixedWidth(56)
         self.modality_btn.setStyleSheet(
-            "QPushButton { font-weight: bold; }"
-            "QPushButton:checked { background-color: #4472C4; color: white; }"
+            "QPushButton { font-weight: bold; padding: 4px 8px; "
+            "border: 1px solid #bbb; border-radius: 3px; }"
+            "QPushButton:checked { background-color: #d0dce4; "
+            "border: 1px solid #7a9bb5; }"
         )
         self.modality_btn.toggled.connect(self._on_modality_toggled)
-        self.addWidget(self.modality_btn)
+        mod_row.addWidget(self.modality_btn)
+        self.addWidget(mod_group)
         self.addSeparator()
 
         # --- Open folder ---

@@ -146,7 +146,8 @@ class SliceView(QGraphicsView):
         display = _apply_window_level(slice_arr, self._window, self._level)
         h, w = display.shape
         qimg = QImage(display.data, w, h, w, QImage.Format_Grayscale8)
-        pix = QPixmap.fromImage(qimg.copy())
+        qimg = qimg.convertToFormat(QImage.Format_ARGB32)
+        pix = QPixmap.fromImage(qimg)
         self._pixmap_item.setPixmap(pix)
         self._scene.setSceneRect(QRectF(pix.rect()))
         # First-time fit
@@ -179,6 +180,8 @@ class SliceView(QGraphicsView):
                     self.active_polygon.add_vertex(pt.x(), pt.y())
                     return
                 # Click on a handle — pass through so it can be dragged
+                super().mousePressEvent(event)
+                return
             elif event.button() == Qt.RightButton:
                 self.active_polygon.remove_last_vertex()
                 return
