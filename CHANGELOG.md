@@ -45,7 +45,8 @@ All notable changes to BodyFatAnalyzer are documented here. Versions follow
 
 ### Notes
 - Test suite extended with progress/cancellation, Clear-All, modality-reset,
-  and ROI-convergence cases; full suite **92/92 green**.
+  ROI-convergence, and MR fat-fraction coverage (`tests/test_mr.py`);
+  full suite **107/107 green**.
 
 ## [0.3.0] - 2026-06-02
 
