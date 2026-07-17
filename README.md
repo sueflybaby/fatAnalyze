@@ -1,12 +1,11 @@
-# fatAnalyze
+# BodyFatAnalyzer
 
 CT-based ectopic fat analysis for **liver (hepatic steatosis)**, **pancreas (pancreatic steatosis)**, and **psoas (myosteatosis at L3)**. Built around TotalSegmentator v2 with a single-case interactive workflow.
 
 A native **PySide6 GUI** (`fatanalyze-gui`) is the primary interface for
 single-case use: open a DICOM folder, navigate the volume slice-by-slice,
 draw a polygon ROI on the slice you want, and the same histogram + clinical
-metric pipeline runs on the drawn mask. A `fatanalyze` CLI entry point
-remains for headless / batch use.
+metric pipeline runs on the drawn mask.
 
 ## What it does
 
@@ -95,19 +94,9 @@ populated using the L+R merged mask. The polygon is 2D and 1-slice thick, so
 `volume_ml` reflects a 1-slice volume; use TotalSegmentator segmentation for
 whole-organ 3D analysis.
 
-## CLI workflow (headless / batch)
+## Python API
 
-```bash
-# Run the full pipeline on a DICOM series:
-fatanalyze path/to/dicom_dir/ --out-dir fatanalyze-out/
-
-# With caching and subset of targets:
-fatanalyze path/to/dicom_dir/ \
-    --cache-dir .cache/totalseg_runs \
-    --targets liver pancreas iliopsoas_left iliopsoas_right
-```
-
-The same Python API is also available:
+The analysis pipeline is also usable directly from Python:
 
 ```python
 from fatanalyze.io.dicom_loader import load_ct_series
@@ -117,7 +106,6 @@ from fatanalyze.analysis.fat_metrics import liver_spleen_ratio, psoas_imat_fract
 
 image, qc = load_ct_series("./ct_series/")
 masks = segment(image, roi_names=["liver", "iliopsoas_left", "iliopsoas_right"])
-# ... see notebooks/single_case.ipynb (historical) for the full script
 ```
 
 ## Plan B: MONAI instead of TotalSegmentator

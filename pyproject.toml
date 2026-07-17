@@ -9,7 +9,7 @@ description = "CT-based fat analysis: liver, pancreas, and psoas (L3-approx) ect
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "fatAnalyze" }]
+authors = [{ name = "BodyFatAnalyzer" }]
 dependencies = [
     "pydicom>=2.4",
     "SimpleITK>=2.3",
@@ -29,7 +29,6 @@ test = ["pytest>=7.0"]
 all = ["fatanalyze[gui,test,totalseg]"]
 
 [project.scripts]
-fatanalyze = "fatanalyze.cli:main"
 fatanalyze-gui = "fatanalyze.gui.app:main"
 
 [tool.setuptools.packages.find]
