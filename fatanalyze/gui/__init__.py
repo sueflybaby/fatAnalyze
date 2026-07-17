@@ -1,4 +1,4 @@
-"""Native PySide6 GUI for fatAnalyze — single-case CT, draw-and-analyze workflow.
+"""Native PySide6 GUI for BodyFatAnalyzer — single-case CT, draw-and-analyze workflow.
 
 The GUI is a thin layer on top of the existing analysis modules:
 

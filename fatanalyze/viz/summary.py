@@ -115,7 +115,7 @@ def plot_summary(
         table2.set_fontsize(9)
         table2.scale(1, 1.2)
 
-    fig.suptitle("fatAnalyze summary", fontsize=14, fontweight="bold")
+    fig.suptitle("BodyFatAnalyzer summary", fontsize=14, fontweight="bold")
     fig.tight_layout(rect=(0, 0.16, 1, 0.96))
     return fig
 

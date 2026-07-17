@@ -107,7 +107,7 @@ class TestLocaleManagement:
 class TestWindowLocale:
     def test_window_title_in_english(self, app: QApplication) -> None:
         win = FatAnalyzeWindow()
-        assert win.windowTitle() == "fatAnalyze"
+        assert win.windowTitle() == "BodyFatAnalyzer"
 
     def _switch(self, app, win, locale):
         """Switch locale via the public path used by production code."""

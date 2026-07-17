@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to fatAnalyze are documented here. Versions follow
+All notable changes to BodyFatAnalyzer are documented here. Versions follow
 [Semantic Versioning](https://semver.org/).
 
 ## [0.3.0] - 2026-06-02

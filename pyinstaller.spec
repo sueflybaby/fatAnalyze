@@ -1,12 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-"""PyInstaller spec for fatAnalyze Windows build.
+"""PyInstaller spec for BodyFatAnalyzer Windows build.
 
 Build (from repo root)::
 
     pyinstaller pyinstaller.spec
 
-Output goes to ``dist/fatAnalyze/`` (onedir).
+Output goes to ``dist/BodyFatAnalyzer/`` (onedir).
 """
 
 import os
@@ -90,7 +90,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="fatAnalyze",
+    name="BodyFatAnalyzer",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -113,5 +113,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="fatAnalyze",
+    name="BodyFatAnalyzer",
 )

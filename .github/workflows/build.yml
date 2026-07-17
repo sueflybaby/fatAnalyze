@@ -30,6 +30,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: fatAnalyze-Windows-x64
-          path: dist/fatAnalyze/
+          name: BodyFatAnalyzer-Windows-x64
+          path: dist/BodyFatAnalyzer/
           if-no-files-found: error
