@@ -90,6 +90,16 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller pyinstaller.spec --noconfirm
 
+      # numpy's C-extension needs MSVCP140.dll next to the .pyd files, but
+      # PyInstaller may drop it under a sub-directory (e.g. shiboken6/).
+      # Copy every MSVCP140*.dll to the bundle root so numpy/scipy load.
+      - name: Ensure VC++ runtime at bundle root
+        run: |
+          $dlls = Get-ChildItem -Path dist\BodyFatAnalyzer -Recurse -Filter MSVCP140*.dll
+          foreach ($d in $dlls) {
+            Copy-Item -Force $d.FullName -Destination dist\BodyFatAnalyzer\
+          }
+
       - name: Smoke test (import graph)
         run: python -c "import fatanalyze.gui.app; print('gui import OK')"
 
