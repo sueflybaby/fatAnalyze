@@ -37,3 +37,6 @@ ANCHORED.md
 
 # Software copyright application materials (non-code, sensitive)
 软件著作权申请资料/
+
+# Windows build artifact (PyInstaller output, binary)
+artifact-win/
